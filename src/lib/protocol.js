@@ -33,8 +33,7 @@ export const Msg = {
 
   // —— 侧边栏 → 内容脚本 的导出命令（需异步响应 { ok, ... }）——
   EXPORT_MARKDOWN: "EXPORT_MARKDOWN",
-  EXPORT_MARKDOWN_TEXT_ONLY: "EXPORT_MARKDOWN_TEXT_ONLY",
-  PREPARE_PDF: "PREPARE_PDF",
+  PREPARE_EXPORT: "PREPARE_EXPORT",
 
   // —— SW → 渲染标签页 的分块 HTML 推送 ——
   RENDER_HTML_CHUNK_START: "RENDER_HTML_CHUNK_START",

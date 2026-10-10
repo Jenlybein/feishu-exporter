@@ -26,7 +26,7 @@
   const fetchImageDataUrl = FX.fetchImageDataUrl;
   const fetchSpecialBlockDataUrl = FX.fetchSpecialBlockDataUrl;
 
-  window.__feishuExtractHtml = async function extractPdfHtml() {
+  window.__feishuExtractHtml = async function extractDocumentHtml() {
 const pause = (ms) => new Promise((resolvePause) => setTimeout(resolvePause, ms));
 const isRenderableRootBlock = (value) => {
             if (!value || typeof value !== "object") {

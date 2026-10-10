@@ -46,15 +46,6 @@ function captureMarkdownSnapshot(snapshots) {
   }
 }
 
-// 预加载快照通常更长，优先返回；否则用当前提取。
-export function getBestMarkdownSnapshot() {
-  const current = buildMarkdown();
-  if (preloadedMarkdownSnapshot && preloadedMarkdownSnapshot.length > current.length) {
-    return preloadedMarkdownSnapshot;
-  }
-  return current;
-}
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -161,12 +152,14 @@ function scrollContainerTo(container, top, behavior = "smooth") {
   setScrollTop(container, top);
 }
 
-// 渐进滚动加载长文档：边滚动边采集 Markdown 快照，直到高度稳定且到达底部且
-// 无待渲染块，最后合并快照写回 preloadedMarkdownSnapshot，并返回原始滚动位置。
+// 渐进滚动加载长文档：直到高度稳定、到达底部且无待渲染块。仅当 captureMarkdown
+// 为真（Markdown 导出）时才边滚动边采集 Markdown 快照并合并写回
+// preloadedMarkdownSnapshot；PDF / HTML 只借用滚动本身触发懒加载。返回原始滚动位置。
 async function preloadDocumentContent(container, options = {}) {
   if (!container) {
     return 0;
   }
+  const captureMarkdown = options.captureMarkdown === true;
   const markdownSnapshots = [];
   const originalTop = getScrollTop(container);
   const stepDelay = Number(options.stepDelay) || 420;
@@ -183,14 +176,18 @@ async function preloadDocumentContent(container, options = {}) {
 
   scrollContainerTo(container, scrollTarget, "auto");
   await sleep(Math.max(200, Math.min(500, stepDelay)));
-  captureMarkdownSnapshot(markdownSnapshots);
+  if (captureMarkdown) {
+    captureMarkdownSnapshot(markdownSnapshots);
+  }
 
   for (let step = 0; step < maxSteps; step += 1) {
     const pending = getPendingBlockCount();
     scrollTarget = Math.min(scrollTarget + stepDistance, container.scrollHeight);
     scrollContainerTo(container, scrollTarget, "auto");
     await sleep(stepDelay);
-    captureMarkdownSnapshot(markdownSnapshots);
+    if (captureMarkdown) {
+      captureMarkdownSnapshot(markdownSnapshots);
+    }
 
     const height = container.scrollHeight;
     const maxTop = Math.max(0, height - container.clientHeight);
@@ -221,9 +218,11 @@ async function preloadDocumentContent(container, options = {}) {
     lastHeight = height;
   }
 
-  const mergedMarkdown = mergeMarkdownSnapshots(markdownSnapshots);
-  if (mergedMarkdown) {
-    preloadedMarkdownSnapshot = mergedMarkdown;
+  if (captureMarkdown) {
+    const mergedMarkdown = mergeMarkdownSnapshots(markdownSnapshots);
+    if (mergedMarkdown) {
+      preloadedMarkdownSnapshot = mergedMarkdown;
+    }
   }
 
   return originalTop;
@@ -297,13 +296,17 @@ export function emitExportProgress(requestId, exportType, progress, message) {
   }
 }
 
-// PDF 导出前预加载：定位滚动容器，渐进滚动触发懒加载，回顶后移除遮罩。
-export async function preparePdfExport(requestId, exportType) {
+// 导出前预加载：定位滚动容器，渐进滚动触发懒加载，回顶后移除遮罩。
+// PDF / HTML / Markdown 三条导出共用；仅 Markdown 需要采集内容快照。
+export async function prepareExport(requestId, exportType) {
+  const captureMarkdown = exportType === "markdown";
   const container = findScrollContainer();
   if (!container) {
-    const markdownSnapshots = [];
-    captureMarkdownSnapshot(markdownSnapshots);
-    preloadedMarkdownSnapshot = mergeMarkdownSnapshots(markdownSnapshots);
+    if (captureMarkdown) {
+      const markdownSnapshots = [];
+      captureMarkdownSnapshot(markdownSnapshots);
+      preloadedMarkdownSnapshot = mergeMarkdownSnapshots(markdownSnapshots);
+    }
     emitExportProgress(requestId, exportType, 6, "未找到滚动容器，尝试直接导出");
     return;
   }
@@ -315,6 +318,7 @@ export async function preparePdfExport(requestId, exportType) {
   try {
     emitExportProgress(requestId, exportType, progressBase, "正在预加载文档内容...");
     originalTop = await preloadDocumentContent(container, {
+      captureMarkdown,
       onStep: ({ step, maxSteps, pending }) => {
         const ratio = maxSteps ? step / maxSteps : 0;
         const progress =

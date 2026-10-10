@@ -373,7 +373,7 @@ async function ensureFeishuTab() {
 
 async function prepareDocument(tabId, requestId, exportType) {
   const prepare = await sendTabMessageWithAutoInject(tabId, {
-    type: Msg.PREPARE_PDF,
+    type: Msg.PREPARE_EXPORT,
     requestId,
     exportType
   });

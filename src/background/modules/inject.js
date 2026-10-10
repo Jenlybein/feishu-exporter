@@ -22,7 +22,9 @@ export function countDocumentImages(tabId) {
     .catch(() => 0);
 }
 
-export function extractPdfHtml(tabId) {
+// 通用文档 HTML 提取：把飞书块模型逆向为自包含 HTML，供 PDF / Markdown / HTML
+// 三条导出共用（旧名 extractPdfHtml 会让人误以为只服务 PDF）。
+export function extractDocumentHtml(tabId) {
   return injectAndRun(
     tabId,
     ["src/injected/feishu-shared.js", "src/injected/extract-html.js"],

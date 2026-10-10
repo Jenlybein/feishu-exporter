@@ -122,7 +122,7 @@ src/
       debugger.js              CDP Page.printToPDF
       download.js              chrome.downloads 封装 + ZIP（fflate）
       progress.js              进度广播
-  content.js + content/*       内容脚本：PREPARE_PDF / EXPORT_MARKDOWN 命令 + 预加载
+  content.js + content/*       内容脚本：PREPARE_EXPORT / EXPORT_MARKDOWN 命令 + 预加载
   injected/                   MAIN world 经典脚本（禁止 import/export）
     feishu-shared.js           window.__feishu 共享工具命名空间
     extract-html.js            块模型 → HTML（领域复杂，单文件保持稳定）

@@ -1,6 +1,6 @@
 import { stripInvisibleText } from "../../lib/text.js";
 import { sanitizeFilename } from "../../lib/filename.js";
-import { zipSync } from "fflate";
+import { zipSync, strToU8 } from "fflate";
 import {
   downloadFile,
   downloadContent,
@@ -19,7 +19,7 @@ import {
   sendChunkedHtmlToRenderTab,
   waitForMarkdownRenderResult
 } from "./render.js";
-import { countDocumentImages, extractPdfHtml, extractAttachments } from "./inject.js";
+import { countDocumentImages, extractDocumentHtml, extractAttachments } from "./inject.js";
 
 // wrapHtmlDocument 已移至 ./templates.js，本模块从那里 import。
 
@@ -38,7 +38,7 @@ export async function exportHtml(tabId, title, requestId) {
   if (imageCount > 0) {
     sendExportProgress(tabId, requestId, "html", 20, `保存图片中 0/${imageCount}`);
   }
-  const result = await extractPdfHtml(tabId);
+  const result = await extractDocumentHtml(tabId);
   if (!result || !result.ok || !result.html) {
     throw new Error(result?.error || "无法提取文档内容");
   }
@@ -62,7 +62,7 @@ export async function exportHtml(tabId, title, requestId) {
 // 把提取到的 HTML 丢给 md-render 标签页，分块回传后由 turndown 转成 Markdown。
 // 返回 { title, markdown, images }，供后续打包成 zip。
 async function extractMarkdownFromHtml(tabId, title) {
-  const result = await extractPdfHtml(tabId);
+  const result = await extractDocumentHtml(tabId);
   if (!result || !result.ok || !result.html) {
     throw new Error(result?.error || "无法提取文档内容");
   }
@@ -275,7 +275,7 @@ export async function exportPdfFromHtml(tabId, title, requestId) {
     } else {
       sendExportProgress(tabId, requestId, "pdf", 25, "正在提取文档内容（含图片）...");
     }
-    const result = await extractPdfHtml(tabId);
+    const result = await extractDocumentHtml(tabId);
     if (!result || !result.ok || !result.html) {
       sendExportProgress(tabId, requestId, "pdf", 35, "提取失败，尝试直接导出");
       const filename = await exportPdf(tabId, title);
