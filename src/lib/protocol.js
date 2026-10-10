@@ -33,6 +33,10 @@ export const Msg = {
   EXPORT_WORD_ADVANCED: "EXPORT_WORD_ADVANCED",
   DOWNLOAD_MARKDOWN: "DOWNLOAD_MARKDOWN",
 
+  // 批量：勾选目录树里的一批文档，逐篇抓取后打包成一个 ZIP。
+  // 消息体带 plan（见 lib/batch-plan.js），成功响应返回 { ok, result }。
+  EXPORT_BATCH_MARKDOWN: "EXPORT_BATCH_MARKDOWN",
+
   // —— 侧边栏 → 内容脚本 的导出命令（需异步响应 { ok, ... }）——
   EXPORT_MARKDOWN: "EXPORT_MARKDOWN",
   PREPARE_EXPORT: "PREPARE_EXPORT",
@@ -54,8 +58,17 @@ export const Msg = {
 // 导出命令中，哪些成功响应返回的是 result 对象（而非 filename）。
 // 用于 EXPORT_HANDLERS 分发表决定 ok 字段名。
 export const EXPORT_RESULT_KEY = {
-  [Msg.EXPORT_ATTACHMENTS]: "result"
+  [Msg.EXPORT_ATTACHMENTS]: "result",
+  [Msg.EXPORT_BATCH_MARKDOWN]: "result"
 };
+
+// 批量导出的长连接端口名。
+//
+// MV3 的 Service Worker 会在空闲约 30s 后被回收，而批量导出动辄数分钟——尤其在
+// 「等渲染页回传」这种纯等待阶段，SW 收不到任何事件，最容易被回收，整条异步链
+// 就此断掉、进度卡死。侧边栏在批量期间保持一条长连接并周期心跳，连接存在即视为
+// SW 仍在工作，从而撑过整批。
+export const BATCH_PORT_NAME = "feishu-exporter-batch";
 
 // —— 响应契约：所有异步消息统一返回 { ok, error | <okKey> } ——
 

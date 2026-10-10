@@ -59,6 +59,74 @@ export async function exportHtml(tabId, title, requestId) {
   return filename;
 }
 
+// —— 渲染标签页的复用 ——
+//
+// 渲染页是「HTML → 产物」的无状态转换器：交给它一份 HTML 的标题与正文，它回传
+// Markdown / docx。单篇导出时用完即关；批量导出要连续处理几十篇，如果每篇都
+// 建一次、销一次标签页，光标签页生命周期就要几十秒。所以这里把「建页」「推 HTML」
+// 「等结果」「关页」拆开，批量时一个渲染页连续服务多篇。
+
+export function createRenderRequestId(prefix) {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// 打开渲染页并等它加载完成，返回 tabId。
+export async function openRenderTab(htmlPath, timeoutMs = 15000) {
+  const url = chrome.runtime.getURL(htmlPath);
+  const renderTab = await chrome.tabs.create({ url, active: false });
+  try {
+    await waitForTabReady(renderTab.id, timeoutMs);
+  } catch (error) {
+    closeTab(renderTab.id);
+    throw error;
+  }
+  return renderTab.id;
+}
+
+// 关闭标签页。批量收尾时可能在页面已被用户手动关掉之后才调用，忽略失败。
+export function closeTab(tabId) {
+  if (!tabId) {
+    return;
+  }
+  try {
+    chrome.tabs.remove(tabId);
+  } catch (error) {
+    // 忽略：标签页已不存在
+  }
+}
+
+// 让渲染页把一份 HTML 转成 Markdown，返回 { markdown, images }。
+// renderTabId 由调用方持有，本函数不负责建/销标签页。
+export async function renderMarkdownViaTab(
+  renderTabId,
+  { title, html, timeoutMs = 120000 }
+) {
+  const renderRequestId = createRenderRequestId("md-render");
+  const responsePromise = waitForRenderResult(renderRequestId, timeoutMs);
+  try {
+    await sendChunkedHtmlToRenderTab({
+      targetTabId: renderTabId,
+      renderType: "md",
+      title,
+      html,
+      requestId: renderRequestId
+    });
+  } catch (error) {
+    // 推送失败时等待者仍在计时，超时后会 reject；先吞掉以免产生未处理的 rejection。
+    responsePromise.catch(() => {});
+    throw error;
+  }
+
+  const chunkedResponse = await responsePromise;
+  if (!chunkedResponse || !chunkedResponse.ok) {
+    throw new Error(chunkedResponse?.error || "无法生成 Markdown");
+  }
+  return {
+    markdown: chunkedResponse.markdown || "",
+    images: Array.isArray(chunkedResponse.images) ? chunkedResponse.images : []
+  };
+}
+
 // 把提取到的 HTML 丢给 md-render 标签页，分块回传后由 turndown 转成 Markdown。
 // 返回 { title, markdown, images }，供后续打包成 zip。
 async function extractMarkdownFromHtml(tabId, title) {
@@ -69,37 +137,18 @@ async function extractMarkdownFromHtml(tabId, title) {
   const resolvedTitle = stripInvisibleText(result.title || title || "feishu-document").trim();
   let renderTabId = null;
   try {
-    const url = chrome.runtime.getURL("src/render/md-render.html");
-    const renderTab = await chrome.tabs.create({ url, active: false });
-    renderTabId = renderTab.id;
-    await waitForTabReady(renderTabId);
-
-    const renderRequestId = `md-render-${Date.now().toString(36)}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}`;
-    const responsePromise = waitForRenderResult(renderRequestId, 120000);
-    await sendChunkedHtmlToRenderTab({
-      targetTabId: renderTabId,
-      renderType: "md",
+    renderTabId = await openRenderTab("src/render/md-render.html");
+    const rendered = await renderMarkdownViaTab(renderTabId, {
       title: resolvedTitle,
-      html: result.html,
-      requestId: renderRequestId
+      html: result.html
     });
-    const chunkedResponse = await responsePromise;
-
-    if (!chunkedResponse || !chunkedResponse.ok) {
-      throw new Error(chunkedResponse?.error || "无法生成 Markdown");
-    }
-
     return {
       title: resolvedTitle,
-      markdown: chunkedResponse.markdown || "",
-      images: Array.isArray(chunkedResponse.images) ? chunkedResponse.images : []
+      markdown: rendered.markdown,
+      images: rendered.images
     };
   } finally {
-    if (renderTabId) {
-      chrome.tabs.remove(renderTabId);
-    }
+    closeTab(renderTabId);
   }
 }
 
@@ -255,14 +304,9 @@ export async function exportWordFromHtml(tabId, title, requestId) {
   let renderTabId = null;
   let dataUrl = "";
   try {
-    const url = chrome.runtime.getURL("src/render/word-render.html");
-    const renderTab = await chrome.tabs.create({ url, active: false });
-    renderTabId = renderTab.id;
-    await waitForTabReady(renderTabId);
+    renderTabId = await openRenderTab("src/render/word-render.html");
 
-    const renderRequestId = `word-render-${Date.now().toString(36)}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}`;
+    const renderRequestId = createRenderRequestId("word-render");
     const responsePromise = waitForRenderResult(renderRequestId, 180000);
     await sendChunkedHtmlToRenderTab({
       targetTabId: renderTabId,
@@ -277,9 +321,7 @@ export async function exportWordFromHtml(tabId, title, requestId) {
     }
     dataUrl = chunkedResponse.dataUrl;
   } finally {
-    if (renderTabId) {
-      chrome.tabs.remove(renderTabId);
-    }
+    closeTab(renderTabId);
   }
 
   sendExportProgress(tabId, requestId, "word", 85, "正在保存 Word 文件...");
@@ -355,16 +397,11 @@ export async function exportPdfFromHtml(tabId, title, requestId) {
       );
     }
     sendExportProgress(tabId, requestId, "pdf", 45, "内容解析完成，准备渲染...");
-    const url = chrome.runtime.getURL("src/render/pdf-render.html");
-    const renderTab = await chrome.tabs.create({ url, active: false });
-    renderTabId = renderTab.id;
-    await waitForTabReady(renderTabId);
+    renderTabId = await openRenderTab("src/render/pdf-render.html");
 
     sendExportProgress(tabId, requestId, "pdf", 65, "正在渲染 PDF 页面...");
     const readyPromise = waitForRenderReady(renderTabId, 60000);
-    const renderRequestId = `pdf-render-${Date.now().toString(36)}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}`;
+    const renderRequestId = createRenderRequestId("pdf-render");
     await sendChunkedHtmlToRenderTab({
       targetTabId: renderTabId,
       renderType: "pdf",
@@ -389,9 +426,7 @@ export async function exportPdfFromHtml(tabId, title, requestId) {
     sendExportProgress(tabId, requestId, "pdf", 100, "PDF 导出完成");
     return filename;
   } finally {
-    if (renderTabId) {
-      chrome.tabs.remove(renderTabId);
-    }
+    closeTab(renderTabId);
   }
 }
 

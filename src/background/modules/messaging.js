@@ -13,6 +13,7 @@ import {
   completeRenderResultSuccess,
   completeRenderResultError
 } from "./render.js";
+import { exportBatchMarkdown } from "./batch.js";
 import {
   Msg,
   EXPORT_RESULT_KEY,
@@ -29,8 +30,8 @@ export function readTabContext(message, sender) {
   };
 }
 
-// 需要 tabId 的六个导出动作：消息类型 -> 用上下文构造任务的工厂。
-// 附件成功返回的是 result 对象、其余返回 filename，用 EXPORT_RESULT_KEY 区分。
+// 需要 tabId 的导出动作：消息类型 -> 用上下文构造任务的工厂。
+// 附件与批量返回的是 result 对象、其余返回 filename，用 EXPORT_RESULT_KEY 区分。
 const EXPORT_HANDLERS = {
   [Msg.EXPORT_PDF]: (ctx) => exportPdf(ctx.tabId, ctx.title),
   [Msg.EXPORT_PDF_ADVANCED]: (ctx) => exportPdfFromHtml(ctx.tabId, ctx.title, ctx.requestId),
@@ -39,7 +40,15 @@ const EXPORT_HANDLERS = {
   [Msg.EXPORT_MARKDOWN_ADVANCED]: (ctx) =>
     exportMarkdownFromModel(ctx.tabId, ctx.title, ctx.requestId),
   [Msg.EXPORT_WORD_ADVANCED]: (ctx) =>
-    exportWordFromHtml(ctx.tabId, ctx.title, ctx.requestId)
+    exportWordFromHtml(ctx.tabId, ctx.title, ctx.requestId),
+  // 批量导出的计划由侧边栏预先算好（它才有目录树与勾选状态），这里只负责跑流程。
+  [Msg.EXPORT_BATCH_MARKDOWN]: (ctx, message) =>
+    exportBatchMarkdown({
+      sourceTabId: ctx.tabId,
+      host: message.host,
+      plan: message.plan,
+      requestId: ctx.requestId
+    })
 };
 
 // 注册唯一的 chrome.runtime.onMessage 监听器。所有消息类型在此集中分发，
@@ -116,7 +125,7 @@ export function registerMessageHandler() {
       }
       return replyAsync(
         sendResponse,
-        EXPORT_HANDLERS[message.type](ctx),
+        EXPORT_HANDLERS[message.type](ctx, message),
         EXPORT_RESULT_KEY[message.type] || "filename"
       );
     }

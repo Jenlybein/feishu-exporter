@@ -1,5 +1,6 @@
 import { createReactiveStore } from "../lib/reactive.js";
-import { Msg, exportCommand } from "../lib/protocol.js";
+import { Msg, exportCommand, BATCH_PORT_NAME } from "../lib/protocol.js";
+import { buildBatchPlan } from "../lib/batch-plan.js";
 import {
   applyNodeChecked,
   buildTree,
@@ -26,7 +27,8 @@ const KEEP_RENDER_TAB_TIP = "请勿关闭新打开的页面";
 
 const DEFAULT_TREE_HINT =
   "读取左侧目录后，勾选要批量导出的文档。勾选父节点会连带选中它下面的所有文档。\n" +
-  "▾ 子目录已展开 / ▸ 子目录未展开（本次未读取，需在页面上手动展开后重读）/ · 无子目录";
+  "▾ 子目录已展开 / ▸ 子目录未展开（本次未读取，需在页面上手动展开后重读）/ · 无子目录\n" +
+  "勾选后选「导出为 Markdown」再点「执行」，会把选中的文档按目录结构打包成一个 ZIP。";
 // console.table 打太长会拖住 DevTools，超过这个条数只打印并提示。
 const TREE_MAX_PRINT_ROWS = 500;
 
@@ -101,15 +103,34 @@ function renderUi() {
 
   progressBar.style.width = `${Math.max(0, Math.min(100, Number(ui.progress) || 0))}%`;
 
+  const selectedCount = (ui.treeSelectedUids || []).length;
+  const batchReady = ui.format === "markdown" && selectedCount > 0;
+
   formatSelect.value = ui.format;
-  formatHint.textContent = FORMAT_HINTS[ui.format] || "";
+  formatHint.textContent = formatHintText(selectedCount);
   formatSelect.disabled = ui.busy;
   runButton.disabled = ui.busy;
+  runButton.textContent = ui.busy ? "导出中…" : batchReady ? "批量导出" : "执行";
 
   scanTreeButton.disabled = ui.busy || ui.treeBusy;
   scanTreeButton.textContent = ui.treeBusy ? "读取中…" : "读取目录";
 
   renderTreePanel();
+}
+
+// 下拉框说明 + 「勾选有没有生效」的提示。
+// 批量是「勾选 + Markdown」的组合：只在 Markdown 下生效，其它格式仍然只导出
+// 当前打开的这篇文档。不把这条规则写在界面上，用户没法知道勾选到底起了什么作用。
+function formatHintText(selectedCount) {
+  const base = FORMAT_HINTS[ui.format] || "";
+  const count = Number(selectedCount) || 0;
+  if (count === 0) {
+    return base;
+  }
+  if (ui.format === "markdown") {
+    return `${base}（已勾选 ${count} 篇，点「批量导出」将按目录结构打包成一个 ZIP）`;
+  }
+  return `${base}（已勾选 ${count} 篇；批量导出目前只支持 Markdown，其余格式导出的是当前打开的文档）`;
 }
 
 renderUi();
@@ -809,6 +830,134 @@ const handleExportAttachments = () =>
     }
   });
 
+// —— 批量导出：勾选的文档 → 一个 ZIP ——
+//
+// 计划（哪篇文档落到 ZIP 里的哪个路径）在侧边栏算：目录树与勾选状态都在这边，
+// 后台拿到的已经是算好的路径，不必再理解目录树。见 lib/batch-plan.js。
+
+// 批量期间维持一条到 Service Worker 的长连接。MV3 的 SW 空闲约 30s 就被回收，
+// 而「等渲染页回传」这类纯等待阶段没有任何事件，最容易被回收、整批就此断掉。
+let batchPort = null;
+let batchKeepAliveTimer = null;
+
+function startBatchKeepAlive() {
+  stopBatchKeepAlive();
+  try {
+    batchPort = chrome.runtime.connect({ name: BATCH_PORT_NAME });
+    batchPort.onDisconnect.addListener(() => {
+      // 读掉 lastError，避免 SW 重启时在控制台刷未捕获错误
+      void chrome.runtime.lastError;
+    });
+  } catch (error) {
+    batchPort = null;
+  }
+  batchKeepAliveTimer = setInterval(() => {
+    try {
+      batchPort?.postMessage({ type: "ping", at: Date.now() });
+    } catch (error) {
+      // 忽略：连接已断，SW 会自行按需唤醒
+    }
+  }, 20000);
+}
+
+function stopBatchKeepAlive() {
+  if (batchKeepAliveTimer) {
+    clearInterval(batchKeepAliveTimer);
+    batchKeepAliveTimer = null;
+  }
+  try {
+    batchPort?.disconnect();
+  } catch (error) {
+    // 忽略
+  }
+  batchPort = null;
+}
+
+function summarizeBatch(stats, filename) {
+  const total = stats.total || 0;
+  const succeeded = stats.succeeded || 0;
+  const lines = [`批量导出完成：${succeeded}/${total} 篇 → ${filename}`];
+  if (stats.images) {
+    lines.push(`含 ${stats.images} 张图片`);
+  }
+  if (stats.failed) {
+    lines.push(`${stats.failed} 篇失败，明细见压缩包内的「导出报告.txt」`);
+    (stats.failures || []).slice(0, 3).forEach((item) => {
+      lines.push(`· ${item.title || item.path}：${item.reason || "未知错误"}`);
+    });
+  }
+  if (stats.skipped) {
+    lines.push(`跳过 ${stats.skipped} 篇非文档节点`);
+  }
+  if (stats.elapsedMs) {
+    lines.push(`耗时 ${Math.round(stats.elapsedMs / 1000)} 秒`);
+  }
+  return lines.join("\n");
+}
+
+async function handleBatchMarkdown() {
+  const tab = await ensureFeishuTab();
+  if (!tab) {
+    return;
+  }
+
+  const plan = buildBatchPlan(ui.treeNodes, ui.treeSelectedUids);
+  if (!plan.items.length) {
+    setProgress(0);
+    setStatus("勾选的节点里没有可导出的文档（非文档类型，或缺少 wikiToken）。", true);
+    return;
+  }
+
+  reportAnalytics("export_start", "markdown", tab.url, tab.title);
+
+  const requestId = beginExport("markdown", tab.id);
+  startBatchKeepAlive();
+
+  const skippedNote = plan.skipped.length ? `，另跳过 ${plan.skipped.length} 篇非文档` : "";
+  setProgress(2);
+  setStatus(
+    `开始批量导出 ${plan.items.length} 篇文档${skippedNote}…\n` +
+      `导出期间会短暂打开一个后台窗口，请不要关闭它。`
+  );
+
+  try {
+    let host = "";
+    try {
+      host = new URL(tab.url).hostname;
+    } catch (error) {
+      host = "";
+    }
+
+    const response = await sendRuntimeMessage(
+      exportCommand(Msg.EXPORT_BATCH_MARKDOWN, {
+        tabId: tab.id,
+        host,
+        requestId,
+        plan
+      })
+    );
+
+    if (!response || !response.ok) {
+      setProgress(0);
+      setStatus(`批量导出失败：${response?.error || "未知错误"}`, true);
+      reportAnalytics("export_failed", "markdown", tab.url, tab.title);
+      return;
+    }
+
+    const stats = response.result || {};
+    setProgress(100);
+    setStatus(summarizeBatch(stats, response.filename));
+    reportAnalytics("export_success", "markdown", tab.url, tab.title);
+  } catch (error) {
+    setProgress(0);
+    setStatus(`批量导出失败：${getErrorMessage(error)}`, true);
+    reportAnalytics("export_failed", "markdown", tab.url, tab.title);
+  } finally {
+    endExport();
+    stopBatchKeepAlive();
+  }
+}
+
 // 下拉框选中格式 -> 执行动作
 const EXPORT_ACTIONS = {
   markdown: handleExportMarkdown,
@@ -817,6 +966,16 @@ const EXPORT_ACTIONS = {
   word: handleExportWord,
   attachments: handleExportAttachments
 };
+
+// 「执行」到底做什么，取决于「有没有勾选」：勾了文档且是 Markdown，就走批量；
+// 否则维持原来的单篇导出（导出当前打开的这一篇）。
+function resolveExportAction() {
+  const selectedCount = (ui.treeSelectedUids || []).length;
+  if (ui.format === "markdown" && selectedCount > 0) {
+    return handleBatchMarkdown;
+  }
+  return EXPORT_ACTIONS[ui.format];
+}
 
 // 「执行」按钮触发下拉框选中格式对应的导出动作，共用同一套收尾：置忙、进度归零、
 // 异常兜底、结束复原
@@ -842,7 +1001,7 @@ formatSelect.addEventListener("change", () => {
 });
 
 runButton.addEventListener("click", () => {
-  runAction(EXPORT_ACTIONS[ui.format]);
+  runAction(resolveExportAction());
 });
 
 scanTreeButton.addEventListener("click", () => {

@@ -20,8 +20,11 @@
 支持的飞书域名：`*.feishu.cn`、`*.feishu.net`、`*.feishu.cttq.com`。
 
 此外，侧边栏的「目录树」区块可读取飞书 Wiki 左侧的目录树并**多选勾选**：勾父节点会级联
-选中整棵子树，父节点未全选时显示半选态。这是**批量导出**的地基——当前进度为「读取 + 多选」，
-尚未接上按选择批量下载与按目录结构打包 ZIP。
+选中整棵子树，父节点未全选时显示半选态。勾选后在格式下拉里选 **Markdown**、点「批量导出」，
+即可把这批文档逐篇抓下来、**按目录结构打包成一个 ZIP**（每篇一个 `.md`，图片落在同级的
+`<文档名>.assets/` 目录里，Markdown 里的图片引用已改写到该目录）；有失败或跳过的节点会额外
+写一份 `导出报告.txt` 进压缩包。其余格式（Word / PDF / HTML / 附件）目前仍是单篇导出当前文档，
+P2 / P3 再补。
 
 读取侧有两个实测坑（都已处理，改代码前务必先读 `src/content/wiki-tree.js` 的文件头注释）：
 
@@ -119,6 +122,14 @@ npm run dev        # 等价于 vite build --watch
   **不做自动展开**——需要那些内容时在页面上手动展开后重读。
   之所以直连：目录树是同一份 DOM，isolated world 里 `querySelectorAll` 就能读到，不需要 MAIN world 注入与 SW 中转。
 
+- `EXPORT_BATCH_MARKDOWN`：侧边栏 → **SW**。消息体带 `plan`（见 `lib/batch-plan.js`：每篇文档
+  在 ZIP 内的 `mdPath` / `assetsDir`），SW 逐篇导航 → 提取 → 转 Markdown → 汇总成一个 ZIP，
+  成功响应返回 `{ ok, result: { filename, stats } }`（`stats.failures` 里带前若干条失败明细）。
+  计划的路径**在侧边栏算**：目录树与勾选状态都在这边，SW 不必再理解目录树。
+- `BATCH_PORT_NAME`（长连接端口名）：侧边栏在批量期间 `chrome.runtime.connect` 保持一条长连接
+  并 20s 心跳。MV3 的 SW 空闲约 30s 就被回收，而「等渲染页回传」这类纯等待阶段没有任何事件，
+  最容易被回收、整批就此断掉；连接存在即视为 SW 仍在工作。SW 侧只需接住它，不搬运业务数据。
+
 **新增一种导出格式的步骤**（以「新增 Word 导出」为例，已完成，可作参照）：
 
 1. `protocol.js` 的 `Msg` 增加 `EXPORT_WORD_ADVANCED`。
@@ -144,12 +155,14 @@ src/
     chunk.js / chunked-render.js  大消息分块与渲染页接收工厂
     filename.js / images.js / text.js / markdown.js   文件名、图片、文本、Markdown 转换
     tree-path.js               目录树路径工具（uid/pos 解析、pos→树、路径净化与重名消歧、子树级联与三态）
+    batch-plan.js              批量导出的路径规划（勾选集合 → ZIP 内 md / assets 路径、重名消歧、失败报告）
     reactive.js                极简响应式状态容器（侧边栏 UI 用）
   background/
-    index.js                   Service Worker 入口：仅注册面板行为 + 消息分发
+    index.js                   Service Worker 入口：面板行为 + 消息分发 + 批量保活长连接
     modules/
       messaging.js             唯一消息监听入口 + EXPORT_HANDLERS 分发表
-      exporters.js             各格式导出编排（word/html/markdown/attachments/pdf/下载）
+      exporters.js             各格式导出编排（word/html/markdown/attachments/pdf/下载）+ 渲染标签页复用
+      batch.js                 批量导出编排：逐篇抓取 → 汇总 ZIP → 收尾回收
       templates.js             HTML 文档模板（纯展示）
       render.js                渲染标签页协调 + 分块收发
       inject.js                MAIN world 注入封装（injectAndRun / 各提取入口）
@@ -197,6 +210,9 @@ src/
 | `injected/*` 与 `content/*` 不能 import | MV3 经典脚本约束 | 共享逻辑走 `lib/`（被内联）或 `window.__feishu` 命名空间 |
 | `word-render.js` 产物约 810 kB（gzip 167 kB） | `docx` 是完整的 OOXML 生成器，连带 `jszip` / `xml-js` 等依赖一起打包 | 仅落在 Word 渲染页，导出 Word 时才加载；**不**进入 SW / 侧边栏的 `lib.js`（故映射层放在 `render/` 而非 `lib/`，避免被 `manualChunks` 归入共享块） |
 | Word 图片中 webp / svg 需光栅化 | `docx` 只接受 png/jpg/gif/bmp | 在渲染页用 canvas 转 png（顺带限制最大边长）；gif 直接透传 |
+| 批量导出的文档标签页放在**独立窗口**（`focused:false`）里，收尾整窗关闭 | 复用用户当前标签页会把用户页面导航走、还污染历史；用隐藏标签页（`active:false`）会因后台节流漏渲染——飞书编辑器是虚拟列表，流程图/白板/表格必须靠 DOM+canvas 截图 | 独立窗口两头都避开，代价是导出期间会短暂出现一个不抢焦点的后台窗口 |
+| 大 ZIP 经 base64 `data:` URL 下载 | Service Worker 里没有 `URL.createObjectURL`，`downloadZip` 会退化成 `data:application/zip;base64,…` | 接受；单篇导出一直如此。批量越大内存占用越高，超大批量（数百 MB 量级）需要挪到 SW 之外落盘（offscreen document 或侧边栏） |
+| 批量默认跳过 `video / sheet / bitable / mindnote / slide / image` 节点 | 这些节点没有可分页的文档模型，按 Markdown 导出必然失败 | 跳过并写进 `导出报告.txt`；`unknown` / `other`（图标没认出来）**不跳过**——很可能就是普通文档，宁可试一次 |
 
 ---
 
@@ -213,10 +229,13 @@ src/
 
 ## 7. 后续路线图（按收益排序）
 
-0. **批量导出（进行中）**：已完成「完整目录读取 + 侧边栏多选勾选（含子树级联与半选态）」；
-   后续 P1 按所选清单逐篇导出并打包成 ZIP（保留目录结构），P2 补 HTML / Word，P3 补 PDF / 附件与取消、断点续传。
-   注意一个已知张力：MV3 Service Worker 空闲约 30s 会被回收，长批量任务需改用
-   `chrome.runtime.connect({ name: "batch" })` 长连接驱动，主 ZIP 累积在 SW 侧。
+0. **批量导出（进行中）**：
+   - ✅ P0 完整目录读取 + 侧边栏多选勾选（含子树级联与半选态、清单打印）。
+   - ✅ P1 Markdown 批量 + ZIP：勾选清单按目录结构打包成一个 ZIP（含图片与失败报告），
+     SW 侧长连接保活（`BATCH_PORT_NAME`）。
+   - P2 批量补 HTML / Word（复用现有渲染页，路径规划与编排层可直接沿用）。
+   - P3 批量补 PDF / 附件，以及**取消**与**断点续传**：`exportBatchMarkdown` 已预留
+     `shouldStop` 钩子，中断信息（已完成的路径清单）可落 `chrome.storage` 供续传。
 1. **拆分 `extract-html.js`** 为「按块类型」的多个纯渲染器（image / table / sheet / diagram），降低单文件认知负荷；保持零依赖、单入口不变。
 2. **媒体工具去重**：把 `content/markdown.js` 里的 `readBlobAsDataUrl` / `imageSrcToDataUrl` / `canvasToDataUrl` 抽到 `lib/`（会被内容脚本内联）。
 3. **协议增强**：为 `Msg` 增加运行时校验（开发期 `console.warn` 未登记类型），尽早发现拼写错误。
