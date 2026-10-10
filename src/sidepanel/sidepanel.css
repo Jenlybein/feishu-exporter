@@ -1,0 +1,205 @@
+/* Apple Design System - Compact Version */
+:root {
+  --apple-blue: #007AFF;
+  --apple-blue-hover: #0056CC;
+  --apple-green: #34C759;
+  --apple-red: #FF3B30;
+  --apple-orange: #FF9500;
+  --apple-gray-1: #8E8E93;
+  --apple-gray-2: #AEAEB2;
+  --apple-gray-3: #C7C7CC;
+  --apple-gray-4: #D1D1D6;
+  --apple-gray-5: #E5E5EA;
+  --apple-gray-6: #F2F2F7;
+  --apple-label: #000000;
+  --apple-secondary-label: #3C3C43;
+  --apple-tertiary-label: #787880;
+  --apple-bg: #F2F2F7;
+  --apple-card-bg: rgba(255, 255, 255, 0.82);
+  --apple-border: rgba(0, 0, 0, 0.04);
+  --apple-shadow: 0 1px 4px rgba(0, 0, 0, 0.06), 0 0.5px 1px rgba(0, 0, 0, 0.04);
+  --apple-shadow-hover: 0 3px 10px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.05);
+  --apple-radius: 10px;
+  --apple-radius-lg: 14px;
+  --apple-transition: 0.18s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  
+  color-scheme: light;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", 
+               "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0;
+  background: linear-gradient(180deg, #EBEBF0 0%, var(--apple-bg) 100%);
+  min-height: 100vh;
+}
+
+/* Header */
+.header {
+  padding: 10px 12px 8px;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.logo {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--apple-label);
+  letter-spacing: -0.3px;
+}
+
+.sub {
+  margin-top: 4px;
+  color: var(--apple-tertiary-label);
+  font-size: 11px;
+}
+
+/* 导出操作区：格式下拉、执行按钮、说明文案各占一行（grid 堆叠） */
+.export-panel {
+  margin: 8px 10px;
+  padding: 10px 12px;
+  background: var(--apple-card-bg);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-radius: var(--apple-radius);
+  border: 0.5px solid var(--apple-border);
+  box-shadow: var(--apple-shadow);
+  display: grid;
+  gap: 10px;
+}
+
+.format-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 28px 8px 10px;
+  border: 1px solid var(--apple-gray-4);
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--apple-label);
+  background-color: rgba(255, 255, 255, 0.8);
+  /* 自带箭头样式无法定制，用内联 SVG 画一个向下的 chevron */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%238E8E93' stroke-width='2.5'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  background-size: 12px;
+  transition: all var(--apple-transition);
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.format-select:focus {
+  outline: none;
+  border-color: var(--apple-blue);
+  box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.15);
+}
+
+.format-select:disabled {
+  background-color: var(--apple-gray-6);
+  color: var(--apple-gray-1);
+}
+
+.run-button {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 0 10px;
+  padding: 9px 18px;
+  border-radius: 8px;
+  border: none;
+  background: var(--apple-blue);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--apple-transition);
+  box-shadow: 0 1px 2px rgba(0, 122, 255, 0.25);
+}
+
+.run-button:hover:not(:disabled) { background: var(--apple-blue-hover); }
+.run-button:active:not(:disabled) { transform: scale(0.97); }
+.run-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.format-hint {
+  font-size: 11px;
+  color: var(--apple-tertiary-label);
+}
+
+/* Progress */
+.progress {
+  height: 3px;
+  margin: 6px 10px 0;
+  background: var(--apple-gray-5);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--apple-blue) 0%, #5AC8FA 100%);
+  border-radius: 999px;
+  transition: width 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  position: relative;
+}
+
+.progress-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4) 50%, transparent);
+  animation: shimmer 1.8s infinite;
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* Status */
+.status {
+  margin: 8px 10px 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--apple-card-bg);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border: 0.5px solid var(--apple-border);
+  box-shadow: var(--apple-shadow);
+  min-height: 38px;
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--apple-secondary-label);
+  transition: all var(--apple-transition);
+}
+
+.status.error {
+  background: rgba(255, 59, 48, 0.08);
+  border-color: rgba(255, 59, 48, 0.2);
+  color: var(--apple-red);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--apple-gray-3); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--apple-gray-2); }
+
+::selection { background: rgba(0, 122, 255, 0.2); }
+
+button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.3);
+}

@@ -1,0 +1,11 @@
+# 依赖与构建产物
+node_modules/
+dist/
+
+# WorkBuddy 项目内存/缓存（非源码，不入库）
+.workbuddy/
+
+# 操作系统/编辑器垃圾文件
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,20 @@
+{
+  "name": "feishu-batch-exporter",
+  "version": "0.1.5",
+  "private": true,
+  "type": "module",
+  "description": "飞书批量导出助手：Chrome MV3 扩展，构建由 Vite 管理（不依赖 @crxjs 等 MV3 专属插件）。",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite build --watch",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "fflate": "^0.8.2",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
+  },
+  "devDependencies": {
+    "vite": "^5.4.10"
+  }
+}

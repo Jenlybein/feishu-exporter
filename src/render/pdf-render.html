@@ -1,0 +1,73 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PDF 渲染</title>
+    <style>
+      @page {
+        margin: 18mm;
+      }
+      body {
+        margin: 0;
+        padding: 18px;
+        font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: #1f2328;
+      }
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6 {
+        margin: 18px 0 10px;
+      }
+      p {
+        margin: 10px 0;
+        line-height: 1.6;
+      }
+      pre {
+        background: #f6f8fa;
+        border: 1px solid #d0d7de;
+        border-radius: 6px;
+        padding: 10px;
+        overflow-wrap: break-word;
+        white-space: pre-wrap;
+      }
+      blockquote {
+        margin: 12px 0;
+        padding: 8px 12px;
+        border-left: 4px solid #d0d7de;
+        background: #f6f8fa;
+      }
+      hr {
+        border: none;
+        border-top: 1px solid #d0d7de;
+        margin: 18px 0;
+      }
+      .image-row {
+        display: flex;
+        gap: 12px;
+        margin: 12px 0;
+        align-items: flex-start;
+      }
+      .image-row > * {
+        flex: 1 1 0;
+        min-width: 0;
+      }
+      .image-row img {
+        width: 100%;
+        max-width: 100%;
+        height: auto;
+        object-fit: contain;
+      }
+      img {
+        max-width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">正在准备内容…</div>
+    <script type="module" src="pdf-render.js"></script>
+  </body>
+</html>
