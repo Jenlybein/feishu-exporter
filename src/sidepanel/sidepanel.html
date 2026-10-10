@@ -12,6 +12,25 @@
       <div class="sub">仅支持飞书文档页面</div>
     </header>
 
+    <section class="tree-panel">
+      <div class="tree-head">
+        <span class="tree-title">目录树</span>
+        <button id="scan-tree" class="ghost-button" type="button">读取目录</button>
+      </div>
+      <div class="tree-hint" id="tree-hint">
+        读取左侧目录后，勾选要批量导出的文档。勾选父节点会连带选中它下面的所有文档。
+      </div>
+      <div class="tree-toolbar" id="tree-toolbar" hidden>
+        <label class="tree-check-all">
+          <input type="checkbox" id="tree-check-all" />
+          <span>全选</span>
+        </label>
+        <span class="tree-count" id="tree-count">已选 0 / 0</span>
+        <button id="tree-print" class="ghost-button" type="button">打印清单</button>
+      </div>
+      <div class="tree-list" id="tree-list" hidden></div>
+    </section>
+
     <section class="export-panel">
       <select id="export-format" class="format-select" aria-label="导出格式">
         <option value="markdown">导出为 Markdown</option>

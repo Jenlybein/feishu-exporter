@@ -1,12 +1,34 @@
 import { createReactiveStore } from "../lib/reactive.js";
 import { Msg, exportCommand } from "../lib/protocol.js";
+import {
+  applyNodeChecked,
+  buildTree,
+  collectSubtreeUids,
+  flattenTree,
+  parseNodePos,
+  pathTitles,
+  selectionStateOf
+} from "../lib/tree-path.js";
 
 const statusEl = document.getElementById("status");
 const progressBar = document.getElementById("progress-bar");
 const formatSelect = document.getElementById("export-format");
 const formatHint = document.getElementById("format-hint");
 const runButton = document.getElementById("run-export");
+const scanTreeButton = document.getElementById("scan-tree");
+const treeHintEl = document.getElementById("tree-hint");
+const treeToolbarEl = document.getElementById("tree-toolbar");
+const treeCheckAllEl = document.getElementById("tree-check-all");
+const treeCountEl = document.getElementById("tree-count");
+const treePrintButton = document.getElementById("tree-print");
+const treeListEl = document.getElementById("tree-list");
 const KEEP_RENDER_TAB_TIP = "请勿关闭新打开的页面";
+
+const DEFAULT_TREE_HINT =
+  "读取左侧目录后，勾选要批量导出的文档。勾选父节点会连带选中它下面的所有文档。\n" +
+  "▾ 子目录已展开 / ▸ 子目录未展开（本次未读取，需在页面上手动展开后重读）/ · 无子目录";
+// console.table 打太长会拖住 DevTools，超过这个条数只打印并提示。
+const TREE_MAX_PRINT_ROWS = 500;
 
 // 下拉框各选项的说明文案，随选中项显示在操作区下方
 const FORMAT_HINTS = {
@@ -39,7 +61,12 @@ const ui = createReactiveStore(
     statusError: false,
     progress: 0,
     busy: false,
-    format: "markdown"
+    format: "markdown",
+    // —— 目录树（批量导出的「选择源」）——
+    treeBusy: false,
+    treeNodes: [], // flatten 后的节点数组，带 depth / children / ancestors，已按 pos 排序
+    treeSelectedUids: [], // 已勾选的节点 uid（数组，便于比对与序列化）
+    treeHint: DEFAULT_TREE_HINT
   },
   renderUi
 );
@@ -58,6 +85,15 @@ function setBusy(isBusy) {
   ui.busy = isBusy;
 }
 
+// 目录树列表的重建开关：只在「节点清单变了」时重建列表 DOM，
+// 否则勾选/进度等状态刷新会把列表滚动位置和 hover 状态一起清掉。
+// 必须在下面首次 renderUi() 之前完成初始化，否则 renderTreePanel 会撞上 TDZ。
+let renderedNodesRef = null;
+// 每个已渲染行 -> { row, checkbox, node }，勾选变化时只更新复选框三态、不重建 DOM。
+const rowByUid = new Map();
+// 节点 uid -> 子树 uid 列表 的缓存：勾选时每行都要判三态，重复遍历子树很浪费。
+const subtreeUidCache = new Map();
+
 // —— 渲染：所有 DOM 都由状态推导 ——
 function renderUi() {
   statusEl.textContent = ui.status;
@@ -69,9 +105,271 @@ function renderUi() {
   formatHint.textContent = FORMAT_HINTS[ui.format] || "";
   formatSelect.disabled = ui.busy;
   runButton.disabled = ui.busy;
+
+  scanTreeButton.disabled = ui.busy || ui.treeBusy;
+  scanTreeButton.textContent = ui.treeBusy ? "读取中…" : "读取目录";
+
+  renderTreePanel();
 }
 
 renderUi();
+
+// ---------- 目录树面板 ----------
+
+function renderTreePanel(force = false) {
+  treeHintEl.textContent = ui.treeHint || DEFAULT_TREE_HINT;
+
+  const nodes = ui.treeNodes || [];
+  if (!nodes.length) {
+    treeToolbarEl.hidden = true;
+    treeListEl.hidden = true;
+    treeListEl.textContent = "";
+    rowByUid.clear();
+    renderedNodesRef = null;
+    return;
+  }
+
+  treeToolbarEl.hidden = false;
+
+  // 清单没变就只刷新勾选态，保留列表滚动位置。
+  if (!force && renderedNodesRef === nodes) {
+    updateTreeSelectionUi();
+    return;
+  }
+  renderedNodesRef = nodes;
+  rebuildTreeList(nodes);
+  updateTreeSelectionUi();
+}
+
+function rebuildTreeList(nodes) {
+  const fragment = document.createDocumentFragment();
+  rowByUid.clear();
+
+  nodes.forEach((node) => {
+    const row = document.createElement("div");
+    row.className = "tree-row";
+    row.setAttribute("data-uid", node.uid || "");
+    // 缩进用内联 padding：层级是数据，不是样式语义
+    row.style.paddingLeft = `${6 + Math.max(0, Number(node.depth) || 0) * 12}px`;
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "tree-row-check";
+    checkbox.tabIndex = -1;
+
+    // 三种图标：有子节点且子节点已加载 ▾ / 有子节点但未加载 ▸ / 叶子 ·
+    const childLoaded = Array.isArray(node.children) && node.children.length > 0;
+    const icon = document.createElement("span");
+    icon.className = "tree-row-icon";
+    icon.textContent = node.hasChildren ? (childLoaded ? "▾" : "▸") : "·";
+
+    const title = document.createElement("span");
+    title.className = "tree-row-title";
+    title.textContent = node.title || "未命名文档";
+
+    row.appendChild(checkbox);
+    row.appendChild(icon);
+    row.appendChild(title);
+
+    const notes = [];
+    if (node.hasChildren && !childLoaded) {
+      row.classList.add("unloaded");
+      notes.push("子目录未展开");
+    }
+    // 非文档节点（视频、表格等）导出时会被跳过，提前标出来避免误选。
+    if (node.kind && node.kind !== "doc" && node.kind !== "unknown") {
+      const kind = document.createElement("span");
+      kind.className = "tree-row-meta";
+      kind.textContent = node.kind;
+      row.appendChild(kind);
+      notes.push(node.kind);
+    }
+    row.title = notes.length ? `${node.title || ""}（${notes.join("，")}）` : node.title || "";
+
+    rowByUid.set(node.uid, { row, checkbox, node });
+    fragment.appendChild(row);
+  });
+
+  treeListEl.textContent = "";
+  treeListEl.appendChild(fragment);
+  treeListEl.hidden = false;
+}
+
+// 只根据选择集刷新每行的复选框三态与行高亮，不重建 DOM（保留滚动位置）。
+function updateTreeSelectionUi() {
+  const selected = new Set(ui.treeSelectedUids);
+  for (const entry of rowByUid.values()) {
+    const state = selectionStateOf(entry.node, selected, subtreeUidsOf(entry.node));
+    entry.checkbox.checked = state === "checked";
+    entry.checkbox.indeterminate = state === "indeterminate";
+    entry.row.classList.toggle("selected", state === "checked");
+    entry.row.classList.toggle("partial", state === "indeterminate");
+  }
+  updateTreeCountHeader(selected);
+}
+
+function updateTreeCountHeader(selected) {
+  const total = (ui.treeNodes || []).length;
+  const count = selected ? selected.size : ui.treeSelectedUids.length;
+  treeCountEl.textContent = `已选 ${count} / ${total}`;
+  treeCheckAllEl.checked = total > 0 && count === total;
+  treeCheckAllEl.indeterminate = count > 0 && count < total;
+}
+
+function subtreeUidsOf(node) {
+  const key = node.uid || node.pos.join(",");
+  if (!subtreeUidCache.has(key)) {
+    subtreeUidCache.set(key, collectSubtreeUids(node));
+  }
+  return subtreeUidCache.get(key);
+}
+
+function findNodeByUid(uid) {
+  return (ui.treeNodes || []).find((node) => node.uid === uid) || null;
+}
+
+// 勾选/取消一个节点：级联作用到它整棵子树。
+function setNodeChecked(uid, checked) {
+  const node = findNodeByUid(uid);
+  if (!node) {
+    return;
+  }
+  const next = applyNodeChecked(
+    new Set(ui.treeSelectedUids),
+    node,
+    checked,
+    subtreeUidsOf(node)
+  );
+  ui.treeSelectedUids = Array.from(next);
+}
+
+// 点一行：已是全选态就整体取消，否则整体选中。
+function toggleNodeCheck(uid) {
+  const node = findNodeByUid(uid);
+  if (!node) {
+    return;
+  }
+  const selected = new Set(ui.treeSelectedUids);
+  const state = selectionStateOf(node, selected, subtreeUidsOf(node));
+  setNodeChecked(uid, state !== "checked");
+}
+
+function setAllChecked(checked) {
+  ui.treeSelectedUids = checked
+    ? (ui.treeNodes || []).map((node) => node.uid)
+    : [];
+}
+
+// 已勾选清单 -> console.table（当前阶段的验收手段）。
+function printSelectionManifest() {
+  const selected = new Set(ui.treeSelectedUids);
+  const picked = (ui.treeNodes || []).filter((node) => selected.has(node.uid));
+  console.log(`[目录树] 已勾选 ${picked.length} 篇文档`);
+  if (picked.length) {
+    console.table(
+      picked.slice(0, TREE_MAX_PRINT_ROWS).map((node, index) => ({
+        "#": index + 1,
+        title: node.title,
+        path: pathTitles(node).join(" / "),
+        wikiToken: node.wikiToken
+      }))
+    );
+  }
+  if (picked.length > TREE_MAX_PRINT_ROWS) {
+    console.warn(`[目录树] 其余 ${picked.length - TREE_MAX_PRINT_ROWS} 条未打印。`);
+  }
+}
+
+// 读取目录树：侧边栏 → 内容脚本直连（不走 Service Worker），只读当前 DOM
+// 里已经加载出来的节点，不点开折叠节点（改了页面状态容易让用户困惑）。
+async function scanWikiTree() {
+  const tab = await ensureFeishuTab();
+  if (!tab) {
+    return;
+  }
+
+  ui.treeBusy = true;
+  setStatus("正在读取目录树…");
+
+  try {
+    const response = await sendTabMessageWithAutoInject(tab.id, {
+      type: Msg.ENUM_WIKI_TREE
+    });
+    if (!response || !response.ok) {
+      setStatus(`读取目录树失败：${response?.error || "未知错误"}`, true);
+      return;
+    }
+    applyTreeResult(response);
+  } catch (error) {
+    setStatus(`读取目录树失败：${getErrorMessage(error)}`, true);
+  } finally {
+    ui.treeBusy = false;
+  }
+}
+
+function applyTreeResult(result) {
+  const flat = Array.isArray(result.nodes) ? result.nodes : [];
+  const built = buildTree(
+    flat.map((node) => ({ ...node, pos: parseNodePos(node.pos) }))
+  );
+  const ordered = flattenTree(built.roots);
+
+  const stats = result.stats || {};
+  const lines = [`已读取 ${ordered.length} 篇文档（只含页面上已展开的部分）`];
+  if (stats.collapsedParents) {
+    lines.push(`另有 ${stats.collapsedParents} 个折叠节点的子节点未加载，未被读取`);
+  }
+  if (stats.elapsedMs != null) {
+    lines.push(`扫描 ${stats.scanned || 0} 个节点，耗时 ${stats.elapsedMs}ms`);
+  }
+  const skipped = (stats.skippedUnknownPos || 0) + (stats.skippedMissingToken || 0);
+  if (skipped) {
+    lines.push(`另有 ${skipped} 个节点无法导出，已跳过`);
+  }
+  for (const warning of result.warnings || []) {
+    lines.push(`· ${warning}`);
+  }
+
+  // 目录变了，之前的勾选不再成立：清空选择并刷新子树缓存。
+  ui.treeNodes = ordered;
+  ui.treeSelectedUids = [];
+  ui.treeHint = lines.join("\n");
+  subtreeUidCache.clear();
+  renderTreePanel(true);
+
+  if (!ordered.length) {
+    setStatus(
+      "读取完成，但没有读到任何文档。请确认飞书页面左侧的 Wiki 目录已展开，并刷新页面后重试（控制台有诊断信息）。",
+      true
+    );
+  } else {
+    const tail = stats.collapsedParents
+      ? `还有 ${stats.collapsedParents} 个折叠节点的子目录未读取，需要的话在页面上展开后重读。`
+      : "勾选后点「打印清单」查看选择结果。";
+    setStatus(`目录读取完成：共 ${ordered.length} 篇文档。${tail}`);
+  }
+  printWholeManifest(result, ordered);
+}
+
+function printWholeManifest(result, ordered) {
+  console.log(
+    `[目录树] ${result.host || ""} 读取 ${ordered.length} 篇文档`,
+    { stats: result.stats, diagnostics: result.diagnostics }
+  );
+  if (result.warnings && result.warnings.length) {
+    console.warn("[目录树] 警告", result.warnings);
+  }
+  if (ordered.length) {
+    console.table(
+      ordered.slice(0, TREE_MAX_PRINT_ROWS).map((node, index) => ({
+        "#": index + 1,
+        depth: node.depth,
+        title: node.title,
+        wikiToken: node.wikiToken
+      }))
+    );
+  }
+}
 
 function formatExportMessage(message, exportType) {
   if (!message) {
@@ -233,21 +531,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!message || message.type !== Msg.EXPORT_PROGRESS) {
     return;
   }
-  const ack = () => {
+  const respondOk = () => {
     if (typeof sendResponse === "function") {
       sendResponse({ ok: true });
     }
   };
   if (!activeExport || message.requestId !== activeExport.requestId) {
-    ack();
+    respondOk();
     return;
   }
   if (message.exportType !== activeExport.type) {
-    ack();
+    respondOk();
     return;
   }
   if (activeExport.tabId && message.tabId && message.tabId !== activeExport.tabId) {
-    ack();
+    respondOk();
     return;
   }
   if (typeof message.progress === "number") {
@@ -256,7 +554,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.message) {
     setStatus(formatExportMessage(message.message, message.exportType));
   }
-  ack();
+  respondOk();
 });
 
 const FEISHU_HOST_SUFFIXES = [
@@ -545,6 +843,61 @@ formatSelect.addEventListener("change", () => {
 
 runButton.addEventListener("click", () => {
   runAction(EXPORT_ACTIONS[ui.format]);
+});
+
+scanTreeButton.addEventListener("click", () => {
+  if (ui.treeBusy) {
+    return;
+  }
+  scanWikiTree();
+});
+
+// 列表用事件委托：清单可能有几百行，逐行绑监听不划算。
+//
+// 点在复选框上的处理是这里最反直觉的一处，改之前务必看清：
+//   <input type="checkbox"> 被点击时，浏览器会在**派发 click 之前**先执行
+//   「pre-click 激活」把 checkedness 翻转一次（这就是用户想要的意图），点击结束后
+//   再执行「激活行为」（派发 input/change）。如果我们在 click 里 preventDefault，
+//   浏览器就转而执行「被取消的激活步骤」—— 把 checkedness 拨回点击前的值。
+//
+//   早前的实现正是 preventDefault + 从 ui 状态推断意图，结果：处理器里改了状态、
+//   微任务里渲染出勾选态，紧接着浏览器把**被点的那一个复选框**拨回原值。表现就是
+//   「已选计数 +1、父子行该勾的都勾了，唯独刚点的那个框还是空的」。
+//
+//   正确做法：不 preventDefault，让浏览器自己翻，然后直接读翻转后的 checked
+//   作为用户意图（原生语义，无需推断），再级联到整棵子树。
+treeListEl.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!target || typeof target.closest !== "function") {
+    return;
+  }
+  const row = target.closest(".tree-row");
+  if (!row) {
+    return;
+  }
+  const check = target.closest(".tree-row-check");
+  const uid = row.getAttribute("data-uid");
+  if (!uid) {
+    // 没有 uid 就没法级联；这种行本来也不该出现，顺手挡掉默认翻转免得留下假状态。
+    if (check) {
+      event.preventDefault();
+    }
+    return;
+  }
+  if (check) {
+    setNodeChecked(uid, check.checked);
+    return;
+  }
+  // 点行（标题、图标、空白处）：以「当前是否为全选态」决定整体勾选还是取消。
+  toggleNodeCheck(uid);
+});
+
+treeCheckAllEl.addEventListener("change", () => {
+  setAllChecked(treeCheckAllEl.checked);
+});
+
+treePrintButton.addEventListener("click", () => {
+  printSelectionManifest();
 });
 
 async function bootstrap() {

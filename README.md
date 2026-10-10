@@ -19,6 +19,23 @@
 
 支持的飞书域名：`*.feishu.cn`、`*.feishu.net`、`*.feishu.cttq.com`。
 
+此外，侧边栏的「目录树」区块可读取飞书 Wiki 左侧的目录树并**多选勾选**：勾父节点会级联
+选中整棵子树，父节点未全选时显示半选态。这是**批量导出**的地基——当前进度为「读取 + 多选」，
+尚未接上按选择批量下载与按目录结构打包 ZIP。
+
+读取侧有两个实测坑（都已处理，改代码前务必先读 `src/content/wiki-tree.js` 的文件头注释）：
+
+1. **目录树容器不止一个**。飞书同时渲染「目录（暂无内容）」空壳
+   (`.wiki-space-detail-directory-tree`) 与真正装内容的 `#SHARE_WITH_ME_ROOT`，两者是兄弟节点。
+   按选择器「命中即用」会选中空壳、读出 0 条。现在改为全文档收集带 `data-node-uid` 的元素，
+   按 `rootNodeId` 分组后取节点最多的那组。
+2. **没有虚拟滚动，但折叠项的子节点不在 DOM 里**。折叠节点只留一个 `--collapsed` 箭头，
+   子节点要点开才挂上 DOM。因此读取结果**天然只覆盖当前已展开的部分**：`readWikiTree()`
+   是全文档扫描后**纯读**，不点开任何折叠节点（曾实现过「点箭头 → 重扫」的自动展开循环，
+   因 React 展开时机不受控、且会改动用户在页面上的展开状态，已移除）。子节点没加载的折叠
+   节点会带 `hasChildren + collapsed` 标记（侧边栏显示 `▸` 并淡化），`stats.collapsedParents`
+   给出数量、`warnings` 里提示用户手动展开后重读。
+
 ---
 
 ## 2. 快速开始
@@ -93,6 +110,15 @@ npm run dev        # 等价于 vite build --watch
 
 > **约定**：任何新消息类型都**只**在 `protocol.js` 添加，发送方与接收方一律 `import { Msg }`，禁止硬编码消息字符串。
 
+**目录树（批量导出）相关消息**：
+
+- `ENUM_WIKI_TREE`：侧边栏 → **内容脚本直连**（不经 SW）。读取左侧 Wiki 目录树**当前已加载**
+  的节点，同步响应 `{ ok, nodes, stats, diagnostics, warnings }`。
+  `nodes` 是**扁平**数组，靠 `pos`（`data-node-pos` 解析出的索引序列）重建树形，见 `lib/tree-path.js`。
+  子节点尚未加载的折叠节点带 `hasChildren + collapsed` 标记（`stats.collapsedParents` 给出数量），
+  **不做自动展开**——需要那些内容时在页面上手动展开后重读。
+  之所以直连：目录树是同一份 DOM，isolated world 里 `querySelectorAll` 就能读到，不需要 MAIN world 注入与 SW 中转。
+
 **新增一种导出格式的步骤**（以「新增 Word 导出」为例，已完成，可作参照）：
 
 1. `protocol.js` 的 `Msg` 增加 `EXPORT_WORD_ADVANCED`。
@@ -117,6 +143,7 @@ src/
     message.js / tab.js        chrome.runtime / chrome.tabs 的 Promise 封装
     chunk.js / chunked-render.js  大消息分块与渲染页接收工厂
     filename.js / images.js / text.js / markdown.js   文件名、图片、文本、Markdown 转换
+    tree-path.js               目录树路径工具（uid/pos 解析、pos→树、路径净化与重名消歧、子树级联与三态）
     reactive.js                极简响应式状态容器（侧边栏 UI 用）
   background/
     index.js                   Service Worker 入口：仅注册面板行为 + 消息分发
@@ -125,11 +152,12 @@ src/
       exporters.js             各格式导出编排（word/html/markdown/attachments/pdf/下载）
       templates.js             HTML 文档模板（纯展示）
       render.js                渲染标签页协调 + 分块收发
-      inject.js                MAIN world 注入封装（injectAndRun）
+      inject.js                MAIN world 注入封装（injectAndRun / 各提取入口）
       debugger.js              CDP Page.printToPDF
       download.js              chrome.downloads 封装 + ZIP（fflate）
       progress.js              进度广播
   content.js + content/*       内容脚本：PREPARE_EXPORT / EXPORT_MARKDOWN 命令 + 预加载
+    wiki-tree.js               读取左侧 Wiki 目录树（全文档扫描 + 容器分组，只读当前 DOM、不自动展开）
   injected/                   MAIN world 经典脚本（禁止 import/export）
     feishu-shared.js           window.__feishu 共享工具命名空间
     extract-html.js            块模型 → HTML（领域复杂，单文件保持稳定）
@@ -185,6 +213,10 @@ src/
 
 ## 7. 后续路线图（按收益排序）
 
+0. **批量导出（进行中）**：已完成「完整目录读取 + 侧边栏多选勾选（含子树级联与半选态）」；
+   后续 P1 按所选清单逐篇导出并打包成 ZIP（保留目录结构），P2 补 HTML / Word，P3 补 PDF / 附件与取消、断点续传。
+   注意一个已知张力：MV3 Service Worker 空闲约 30s 会被回收，长批量任务需改用
+   `chrome.runtime.connect({ name: "batch" })` 长连接驱动，主 ZIP 累积在 SW 侧。
 1. **拆分 `extract-html.js`** 为「按块类型」的多个纯渲染器（image / table / sheet / diagram），降低单文件认知负荷；保持零依赖、单入口不变。
 2. **媒体工具去重**：把 `content/markdown.js` 里的 `readBlobAsDataUrl` / `imageSrcToDataUrl` / `canvasToDataUrl` 抽到 `lib/`（会被内容脚本内联）。
 3. **协议增强**：为 `Msg` 增加运行时校验（开发期 `console.warn` 未登记类型），尽早发现拼写错误。

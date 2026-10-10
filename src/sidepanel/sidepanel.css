@@ -64,6 +64,161 @@ body {
   font-size: 11px;
 }
 
+/* 目录树区块：读取按钮 + 选中信息 + 缩进清单 */
+.tree-panel {
+  margin: 8px 10px 0;
+  padding: 10px 12px;
+  background: var(--apple-card-bg);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-radius: var(--apple-radius);
+  border: 0.5px solid var(--apple-border);
+  box-shadow: var(--apple-shadow);
+  display: grid;
+  gap: 8px;
+}
+
+.tree-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tree-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--apple-secondary-label);
+  letter-spacing: -0.2px;
+}
+
+.ghost-button {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--apple-gray-4);
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--apple-blue);
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all var(--apple-transition);
+}
+
+.ghost-button:hover:not(:disabled) {
+  background: rgba(0, 122, 255, 0.08);
+  border-color: var(--apple-blue);
+}
+
+.ghost-button:active:not(:disabled) { transform: scale(0.96); }
+.ghost-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.tree-hint {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--apple-tertiary-label);
+  /* 提示里含换行（图标图例、折叠告警），按换行断行 */
+  white-space: pre-line;
+}
+
+.tree-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: rgba(0, 122, 255, 0.06);
+}
+
+.tree-check-all {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--apple-secondary-label);
+  cursor: pointer;
+  user-select: none;
+}
+
+.tree-count {
+  flex: 1 1 auto;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--apple-blue);
+}
+
+.tree-toolbar .ghost-button {
+  padding: 3px 8px;
+  font-size: 10px;
+}
+
+.tree-list {
+  max-height: 260px;
+  overflow: auto;
+  padding: 3px 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 0.5px solid var(--apple-border);
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--apple-label);
+  transition: background var(--apple-transition);
+}
+
+.tree-row:hover { background: rgba(0, 122, 255, 0.07); }
+
+.tree-row.selected { background: rgba(0, 122, 255, 0.1); }
+
+.tree-row.partial { background: rgba(0, 122, 255, 0.04); }
+
+.tree-row-check {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--apple-blue);
+  cursor: pointer;
+}
+
+.tree-row-icon {
+  flex: 0 0 auto;
+  width: 10px;
+  text-align: center;
+  color: var(--apple-gray-1);
+  font-size: 10px;
+}
+
+.tree-row-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-row-meta {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--apple-gray-1);
+}
+
+/* 子目录折叠未展开（本次没读到这批内容）：整行淡化 + 橙色 ▸ 标记。 */
+.tree-row.unloaded .tree-row-title {
+  color: var(--apple-gray-1);
+}
+
+.tree-row.unloaded .tree-row-icon {
+  color: var(--apple-orange, #ff9f0a);
+}
+
 /* 导出操作区：格式下拉、执行按钮、说明文案各占一行（grid 堆叠） */
 .export-panel {
   margin: 8px 10px;

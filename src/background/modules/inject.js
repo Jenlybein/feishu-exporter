@@ -1,13 +1,16 @@
 // 将页面侧提取逻辑（feishu-shared.js + 对应提取脚本）注入 MAIN world 后调用
 // window 上的函数。原先这些大段页面代码内联在 Service Worker 里（反模式），
 // 现拆分为独立注入文件，行为保持不变。
-export async function injectAndRun(tabId, files, windowFn) {
+//
+// windowFn 的返回值可以是 Promise —— chrome.scripting.executeScript 会等待它
+// resolve 后再把结果交回来（页面侧提取脚本内部有异步等待时正是靠这一点）。
+export async function injectAndRun(tabId, files, windowFn, args = []) {
   await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files });
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
-    func: (fnName) => window[fnName](),
-    args: [windowFn]
+    func: (fnName, fnArgs) => window[fnName](...(fnArgs || [])),
+    args: [windowFn, args]
   });
   return results && results[0] && results[0].result;
 }

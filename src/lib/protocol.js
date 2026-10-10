@@ -37,6 +37,13 @@ export const Msg = {
   EXPORT_MARKDOWN: "EXPORT_MARKDOWN",
   PREPARE_EXPORT: "PREPARE_EXPORT",
 
+  // —— 侧边栏 → 内容脚本 的目录树读取 ——
+  // ENUM_WIKI_TREE 侧边栏直连内容脚本：读飞书左侧完整目录树，
+  //                响应 { ok, nodes, stats, diagnostics, warnings }（同步返回）。
+  // 注：目录树是完整渲染的普通 DOM，content script 一遍 querySelectorAll 即可读全，
+  // 不需要滚动、不需要注入 MAIN world，因此这条消息不经过 Service Worker。
+  ENUM_WIKI_TREE: "ENUM_WIKI_TREE",
+
   // —— SW → 渲染标签页 的分块 HTML 推送 ——
   RENDER_HTML_CHUNK_START: "RENDER_HTML_CHUNK_START",
   RENDER_HTML_CHUNK: "RENDER_HTML_CHUNK",
