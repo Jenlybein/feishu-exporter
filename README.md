@@ -1,6 +1,6 @@
 # 飞书批量导出助手（feishu-batch-exporter）
 
-> Chrome MV3 扩展：在飞书文档页**批量导出** PDF / Markdown / HTML / 附件。
+> Chrome MV3 扩展：在飞书文档页**批量导出** Word / PDF / Markdown / HTML / 附件。
 > 版本 `0.1.5` · 构建由 Vite 管理（不依赖 `@crxjs` 等 MV3 专属插件）。
 
 ---
@@ -11,6 +11,7 @@
 
 | 导出格式 | 说明 |
 |----------|------|
+| **Word** | 主干 HTML 经 `docx` 直接映射为 `.docx`（不经 Markdown），保留标题/加粗/表格/代码块/图片 |
 | **PDF** | 借助 Chrome DevTools Protocol（`debugger` 权限）`Page.printToPDF` 生成 |
 | **Markdown** | 通过 `turndown` + `turndown-plugin-gfm` 将文档块模型转为 Markdown |
 | **HTML** | 还原飞书块模型为带样式的自包含 HTML 文档 |
@@ -92,13 +93,19 @@ npm run dev        # 等价于 vite build --watch
 
 > **约定**：任何新消息类型都**只**在 `protocol.js` 添加，发送方与接收方一律 `import { Msg }`，禁止硬编码消息字符串。
 
-**新增一种导出格式的步骤**（以「新增 Word 导出」为例）：
+**新增一种导出格式的步骤**（以「新增 Word 导出」为例，已完成，可作参照）：
 
 1. `protocol.js` 的 `Msg` 增加 `EXPORT_WORD_ADVANCED`。
-2. `background/modules/exporters.js` 增加 `exportWordFromModel(...)`，并在 `messaging.js` 的 `EXPORT_HANDLERS` 表加一行 `[Msg.EXPORT_WORD_ADVANCED]: ...`。
+2. `background/modules/exporters.js` 增加 `exportWordFromHtml(...)`，并在 `messaging.js` 的 `EXPORT_HANDLERS` 表加一行 `[Msg.EXPORT_WORD_ADVANCED]: ...`。
 3. `sidepanel.js` 的 `EXPORT_ACTIONS` 加一项指向对应 `runExportTask` 配置。
 
-无需改动协议以外的任何文件——这是「魔法字符串」痛点被消除后的直接收益。
+若新格式只需要在 Service Worker 内完成（如 HTML、附件），到此即可。
+若需要**独立渲染页**（如 Markdown / Word，依赖 DOM 或重依赖），还需：
+
+4. 在 `vite.config.js` 的 `rollupOptions.input` 注册新的 `render/xxx-render.html` 入口，并实现该页面（接收 `RENDER_HTML_CHUNK_*` 分片，经共享的 `createChunkedRenderHandler` 收尾）。
+5. 生成型渲染页把产物序列化后经 `RENDER_RESULT_CHUNK_*` 分块回传，SW 侧用 `waitForRenderResult(requestId)` 等待——这套结果回传与格式无关，Markdown / Word 共用。
+
+> `RENDER_RESULT_*` 与 `waitForRenderResult` 是**格式无关**的通用机制：渲染页只管把最终产物序列化成字符串切块回传，SW 负责拼装与落盘。
 
 ### 3.3 目录职责
 
@@ -115,7 +122,7 @@ src/
     index.js                   Service Worker 入口：仅注册面板行为 + 消息分发
     modules/
       messaging.js             唯一消息监听入口 + EXPORT_HANDLERS 分发表
-      exporters.js             各格式导出编排（html/markdown/attachments/pdf/下载）
+      exporters.js             各格式导出编排（word/html/markdown/attachments/pdf/下载）
       templates.js             HTML 文档模板（纯展示）
       render.js                渲染标签页协调 + 分块收发
       inject.js                MAIN world 注入封装（injectAndRun）
@@ -127,7 +134,8 @@ src/
     feishu-shared.js           window.__feishu 共享工具命名空间
     extract-html.js            块模型 → HTML（领域复杂，单文件保持稳定）
     extract-attachments.js / count-images.js
-  render/                      md-render / pdf-render 渲染标签页
+  render/                      tab 渲染页（md-render / pdf-render / word-render）
+    html-docx.js               HTML DOM → docx 元素映射层（Word 分支专属，含 docx 依赖）
   sidepanel/                   侧边栏 UI（sidepanel.html / .js / .css）
 ```
 
@@ -159,6 +167,8 @@ src/
 | `guessImageExtension` / `readBlobAsDataUrl` 在 `lib/images.js` 与 `injected/feishu-shared.js` 各有一份 | 两者分别运行在**隔离世界(ISOLATED)**与**MAIN 世界**，无法共享模块 | 接受；`feishu-shared` 是 MAIN 世界唯一可复用的形态 |
 | `extract-html.js` 单文件较大、缩进不统一 | 逆向飞书私有块模型，必须挂在 `window.__feishuExtractHtml` 且零依赖 | 加分区导航注释，暂不做拆分 |
 | `injected/*` 与 `content/*` 不能 import | MV3 经典脚本约束 | 共享逻辑走 `lib/`（被内联）或 `window.__feishu` 命名空间 |
+| `word-render.js` 产物约 810 kB（gzip 167 kB） | `docx` 是完整的 OOXML 生成器，连带 `jszip` / `xml-js` 等依赖一起打包 | 仅落在 Word 渲染页，导出 Word 时才加载；**不**进入 SW / 侧边栏的 `lib.js`（故映射层放在 `render/` 而非 `lib/`，避免被 `manualChunks` 归入共享块） |
+| Word 图片中 webp / svg 需光栅化 | `docx` 只接受 png/jpg/gif/bmp | 在渲染页用 canvas 转 png（顺带限制最大边长）；gif 直接透传 |
 
 ---
 
@@ -167,8 +177,9 @@ src/
 - **运行时**：Chrome 扩展 MV3（Service Worker + 侧边栏 + 内容脚本 + 注入脚本）。
 - **构建**：[Vite](https://vitejs.dev/) `^5.4.10`（自定义插件，未用 `@crxjs`）。
 - **依赖**：
-  - `fflate`：ZIP 打包（附件导出）。
+  - `fflate`：ZIP 打包（附件导出）与 ZIP 解包（测试校验）。
   - `turndown` + `turndown-plugin-gfm`：HTML → Markdown 转换（在经典脚本中被 IIFE 内联）。
+  - `docx`：生成 `.docx`（Word 分支，仅在 `word-render` 渲染页加载，不影响 SW / 侧边栏体积）。
 
 ---
 

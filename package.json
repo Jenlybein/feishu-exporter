@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "docx": "^9.9.0",
     "fflate": "^0.8.2",
     "turndown": "^7.2.4",
     "turndown-plugin-gfm": "^1.0.2"

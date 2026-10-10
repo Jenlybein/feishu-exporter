@@ -42,20 +42,20 @@ async function sendChunkedMarkdownResult(requestId, payload) {
   const serialized = JSON.stringify(payload || {});
   const chunks = splitStringToChunks(serialized);
   await sendRuntimeMessageAsync({
-    type: Msg.RENDER_MD_RESULT_CHUNK_START,
+    type: Msg.RENDER_RESULT_CHUNK_START,
     requestId,
     totalChunks: chunks.length
   });
   for (let i = 0; i < chunks.length; i += 1) {
     await sendRuntimeMessageAsync({
-      type: Msg.RENDER_MD_RESULT_CHUNK,
+      type: Msg.RENDER_RESULT_CHUNK,
       requestId,
       index: i,
       chunk: chunks[i]
     });
   }
   await sendRuntimeMessageAsync({
-    type: Msg.RENDER_MD_RESULT_CHUNK_END,
+    type: Msg.RENDER_RESULT_CHUNK_END,
     requestId
   });
 }
@@ -88,7 +88,7 @@ const handleChunkedRenderMessage = createChunkedRenderHandler({
   onComplete: ({ requestId, title, html }) => renderMarkdownFromHtml(requestId, title, html),
   onError: ({ requestId, error }) =>
     sendRuntimeMessageAsync({
-      type: Msg.RENDER_MD_RESULT_ERROR,
+      type: Msg.RENDER_RESULT_ERROR,
       requestId,
       error: error?.message || "Markdown render failed"
     }).catch(() => {})

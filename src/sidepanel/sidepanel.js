@@ -14,7 +14,7 @@ const FORMAT_HINTS = {
   pdf: "自动渲染生成高清 PDF",
   html: "下载完整网页文件",
   attachments: "批量下载图片和文件",
-  word: "功能开发中"
+  word: "下载 .docx 文档（保留标题/表格/代码块/图片）"
 };
 
 const DEFAULT_BACKEND_URL = "https://api.weiweiniesi.top";
@@ -77,7 +77,7 @@ function formatExportMessage(message, exportType) {
   if (!message) {
     return message;
   }
-  if (exportType === "pdf" || exportType === "markdown") {
+  if (exportType === "pdf" || exportType === "markdown" || exportType === "word") {
     if (message.includes(KEEP_RENDER_TAB_TIP)) {
       return message;
     }
@@ -489,6 +489,16 @@ const handleExportHtml = () =>
     successText: (response) => `HTML 已生成：${response.filename}`
   });
 
+const handleExportWord = () =>
+  runExportTask({
+    type: "word",
+    messageType: Msg.EXPORT_WORD_ADVANCED,
+    prepare: true,
+    startProgress: 6,
+    startText: "正在预加载文档内容...",
+    successText: (response) => `Word 已生成：${response.filename}`
+  });
+
 const handleExportAttachments = () =>
   runExportTask({
     type: "attachments",
@@ -501,11 +511,12 @@ const handleExportAttachments = () =>
     }
   });
 
-// 下拉框选中格式 -> 执行动作。Word 选项在 HTML 里已 disabled，但兜底仍保留
+// 下拉框选中格式 -> 执行动作
 const EXPORT_ACTIONS = {
   markdown: handleExportMarkdown,
   pdf: handleExportPdf,
   html: handleExportHtml,
+  word: handleExportWord,
   attachments: handleExportAttachments
 };
 

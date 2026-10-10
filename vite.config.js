@@ -211,6 +211,7 @@ export default defineConfig({
         "src/sidepanel/sidepanel": r("src/sidepanel/sidepanel.html"),
         "src/render/md-render": r("src/render/md-render.html"),
         "src/render/pdf-render": r("src/render/pdf-render.html"),
+        "src/render/word-render": r("src/render/word-render.html"),
 
         // JS 入口：后台 Service Worker、content script、运行时注入脚本
         "src/background/index": r("src/background/index.js"),

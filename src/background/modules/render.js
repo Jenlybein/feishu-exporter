@@ -4,8 +4,9 @@ import { Msg } from "../../lib/protocol.js";
 
 // PDF 渲染标签页就绪等待者：key 为 renderTabId。
 export const renderWaiters = new Map();
-// Markdown 渲染分块结果收集者：key 为 requestId。
-export const markdownRenderWaiters = new Map();
+// 生成型渲染页（Markdown / Word）的分块结果收集者：key 为 requestId。
+// 与格式无关——渲染页把产物序列化成字符串分块回传，这里只负责拼装。
+export const renderResultWaiters = new Map();
 
 // 等待新建的渲染标签页加载到 complete 状态，超时则 reject。
 export function waitForTabReady(tabId, timeoutMs = 15000) {
@@ -77,14 +78,14 @@ export async function sendChunkedHtmlToRenderTab({
   });
 }
 
-// 等待 Markdown 渲染标签页回传分块结果，超时则 reject。
-export function waitForMarkdownRenderResult(requestId, timeoutMs = 120000) {
+// 等待生成型渲染页回传分块结果，超时则 reject。
+export function waitForRenderResult(requestId, timeoutMs = 120000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      markdownRenderWaiters.delete(requestId);
-      reject(new Error("Markdown render timed out"));
+      renderResultWaiters.delete(requestId);
+      reject(new Error("渲染结果回传超时"));
     }, timeoutMs);
-    markdownRenderWaiters.set(requestId, {
+    renderResultWaiters.set(requestId, {
       resolve,
       reject,
       timer,
@@ -94,27 +95,27 @@ export function waitForMarkdownRenderResult(requestId, timeoutMs = 120000) {
   });
 }
 
-export function completeMarkdownRenderSuccess(requestId, payloadText) {
-  const waiter = markdownRenderWaiters.get(requestId);
+export function completeRenderResultSuccess(requestId, payloadText) {
+  const waiter = renderResultWaiters.get(requestId);
   if (!waiter) {
     return;
   }
   clearTimeout(waiter.timer);
-  markdownRenderWaiters.delete(requestId);
+  renderResultWaiters.delete(requestId);
   try {
     const parsed = JSON.parse(payloadText || "{}");
     waiter.resolve(parsed);
   } catch (error) {
-    waiter.reject(new Error("Failed to parse markdown render result"));
+    waiter.reject(new Error("Failed to parse render result"));
   }
 }
 
-export function completeMarkdownRenderError(requestId, errorMessage) {
-  const waiter = markdownRenderWaiters.get(requestId);
+export function completeRenderResultError(requestId, errorMessage) {
+  const waiter = renderResultWaiters.get(requestId);
   if (!waiter) {
     return;
   }
   clearTimeout(waiter.timer);
-  markdownRenderWaiters.delete(requestId);
-  waiter.reject(new Error(errorMessage || "Markdown render failed"));
+  renderResultWaiters.delete(requestId);
+  waiter.reject(new Error(errorMessage || "渲染失败"));
 }

@@ -17,7 +17,7 @@ import {
   waitForTabReady,
   waitForRenderReady,
   sendChunkedHtmlToRenderTab,
-  waitForMarkdownRenderResult
+  waitForRenderResult
 } from "./render.js";
 import { countDocumentImages, extractDocumentHtml, extractAttachments } from "./inject.js";
 
@@ -77,7 +77,7 @@ async function extractMarkdownFromHtml(tabId, title) {
     const renderRequestId = `md-render-${Date.now().toString(36)}-${Math.random()
       .toString(36)
       .slice(2, 8)}`;
-    const responsePromise = waitForMarkdownRenderResult(renderRequestId, 120000);
+    const responsePromise = waitForRenderResult(renderRequestId, 120000);
     await sendChunkedHtmlToRenderTab({
       targetTabId: renderTabId,
       renderType: "md",
@@ -223,6 +223,68 @@ export async function exportMarkdownFromModel(tabId, title, requestId) {
   sendExportProgress(tabId, requestId, "markdown", 95, "准备下载文件...");
   const filename = await downloadZip(zipData, zipName);
   sendExportProgress(tabId, requestId, "markdown", 100, "Markdown 导出完成");
+  return filename;
+}
+
+// Word 分支：与 PDF/Markdown 一样共用主干 HTML，但**不复用 Markdown 产物**——
+// 把 HTML 直接交给 word-render 标签页映射成 docx（HTML → docx 一步到位），
+// 避免 HTML → Markdown → docx 的中间有损往返，因此加粗/表格/图片等能保真落进 Word。
+// 产物是二进制，渲染页以 data:URL 分块回传（SW 里没有 URL.createObjectURL）。
+export async function exportWordFromHtml(tabId, title, requestId) {
+  sendExportProgress(tabId, requestId, "word", 10, "开始导出 Word...");
+  sendExportProgress(tabId, requestId, "word", 15, "正在读取文档结构...");
+  const imageCount = await countDocumentImages(tabId);
+  if (imageCount > 0) {
+    sendExportProgress(tabId, requestId, "word", 25, `保存图片中 0/${imageCount}`);
+  } else {
+    sendExportProgress(tabId, requestId, "word", 25, "正在提取文档内容...");
+  }
+
+  const result = await extractDocumentHtml(tabId);
+  if (!result || !result.ok || !result.html) {
+    throw new Error(result?.error || "无法提取文档内容");
+  }
+  const resolvedTitle = stripInvisibleText(result.title || title || "feishu-document").trim();
+  const filename = `${sanitizeFilename(resolvedTitle, "feishu-document")}.docx`;
+
+  if (imageCount > 0) {
+    sendExportProgress(tabId, requestId, "word", 45, `保存图片中 ${imageCount}/${imageCount}`);
+  }
+  sendExportProgress(tabId, requestId, "word", 50, "正在生成 Word 文档...");
+
+  let renderTabId = null;
+  let dataUrl = "";
+  try {
+    const url = chrome.runtime.getURL("src/render/word-render.html");
+    const renderTab = await chrome.tabs.create({ url, active: false });
+    renderTabId = renderTab.id;
+    await waitForTabReady(renderTabId);
+
+    const renderRequestId = `word-render-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
+    const responsePromise = waitForRenderResult(renderRequestId, 180000);
+    await sendChunkedHtmlToRenderTab({
+      targetTabId: renderTabId,
+      renderType: "word",
+      title: resolvedTitle,
+      html: result.html,
+      requestId: renderRequestId
+    });
+    const chunkedResponse = await responsePromise;
+    if (!chunkedResponse || !chunkedResponse.ok || !chunkedResponse.dataUrl) {
+      throw new Error(chunkedResponse?.error || "无法生成 Word 文档");
+    }
+    dataUrl = chunkedResponse.dataUrl;
+  } finally {
+    if (renderTabId) {
+      chrome.tabs.remove(renderTabId);
+    }
+  }
+
+  sendExportProgress(tabId, requestId, "word", 85, "正在保存 Word 文件...");
+  await downloadFile(dataUrl, filename, true);
+  sendExportProgress(tabId, requestId, "word", 100, "Word 导出完成");
   return filename;
 }
 

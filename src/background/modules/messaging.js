@@ -4,13 +4,14 @@ import {
   exportHtml,
   exportAttachments,
   exportMarkdownFromModel,
+  exportWordFromHtml,
   downloadMarkdown
 } from "./exporters.js";
 import {
   renderWaiters,
-  markdownRenderWaiters,
-  completeMarkdownRenderSuccess,
-  completeMarkdownRenderError
+  renderResultWaiters,
+  completeRenderResultSuccess,
+  completeRenderResultError
 } from "./render.js";
 import {
   Msg,
@@ -28,7 +29,7 @@ export function readTabContext(message, sender) {
   };
 }
 
-// 需要 tabId 的五个导出动作：消息类型 -> 用上下文构造任务的工厂。
+// 需要 tabId 的六个导出动作：消息类型 -> 用上下文构造任务的工厂。
 // 附件成功返回的是 result 对象、其余返回 filename，用 EXPORT_RESULT_KEY 区分。
 const EXPORT_HANDLERS = {
   [Msg.EXPORT_PDF]: (ctx) => exportPdf(ctx.tabId, ctx.title),
@@ -36,7 +37,9 @@ const EXPORT_HANDLERS = {
   [Msg.EXPORT_HTML]: (ctx) => exportHtml(ctx.tabId, ctx.title, ctx.requestId),
   [Msg.EXPORT_ATTACHMENTS]: (ctx) => exportAttachments(ctx.tabId, ctx.title),
   [Msg.EXPORT_MARKDOWN_ADVANCED]: (ctx) =>
-    exportMarkdownFromModel(ctx.tabId, ctx.title, ctx.requestId)
+    exportMarkdownFromModel(ctx.tabId, ctx.title, ctx.requestId),
+  [Msg.EXPORT_WORD_ADVANCED]: (ctx) =>
+    exportWordFromHtml(ctx.tabId, ctx.title, ctx.requestId)
 };
 
 // 注册唯一的 chrome.runtime.onMessage 监听器。所有消息类型在此集中分发，
@@ -62,8 +65,8 @@ export function registerMessageHandler() {
       return;
     }
 
-    if (message.type === Msg.RENDER_MD_RESULT_CHUNK_START) {
-      const waiter = markdownRenderWaiters.get(message.requestId);
+    if (message.type === Msg.RENDER_RESULT_CHUNK_START) {
+      const waiter = renderResultWaiters.get(message.requestId);
       if (waiter) {
         waiter.totalChunks = Number(message.totalChunks) || 0;
         waiter.chunks = new Array(waiter.totalChunks || 0);
@@ -72,8 +75,8 @@ export function registerMessageHandler() {
       return;
     }
 
-    if (message.type === Msg.RENDER_MD_RESULT_CHUNK) {
-      const waiter = markdownRenderWaiters.get(message.requestId);
+    if (message.type === Msg.RENDER_RESULT_CHUNK) {
+      const waiter = renderResultWaiters.get(message.requestId);
       if (waiter) {
         const index = Number(message.index);
         if (!Number.isNaN(index) && index >= 0) {
@@ -84,8 +87,8 @@ export function registerMessageHandler() {
       return;
     }
 
-    if (message.type === Msg.RENDER_MD_RESULT_CHUNK_END) {
-      const waiter = markdownRenderWaiters.get(message.requestId);
+    if (message.type === Msg.RENDER_RESULT_CHUNK_END) {
+      const waiter = renderResultWaiters.get(message.requestId);
       if (!waiter) {
         ack(sendResponse);
         return;
@@ -94,13 +97,13 @@ export function registerMessageHandler() {
         Array.isArray(waiter.chunks) && waiter.chunks.length > 0
           ? waiter.chunks.join("")
           : "";
-      completeMarkdownRenderSuccess(message.requestId, payloadText);
+      completeRenderResultSuccess(message.requestId, payloadText);
       ack(sendResponse);
       return;
     }
 
-    if (message.type === Msg.RENDER_MD_RESULT_ERROR) {
-      completeMarkdownRenderError(message.requestId, message.error);
+    if (message.type === Msg.RENDER_RESULT_ERROR) {
+      completeRenderResultError(message.requestId, message.error);
       ack(sendResponse);
       return;
     }

@@ -17,7 +17,7 @@
       "matches": [ "https://*.feishu.cn/*", "https://*.feishu.net/*", "https://*.feishu.cttq.com/*" ],
       "run_at": "document_end"
    } ],
-   "description": "飞书批量导出助手：在飞书文档页批量导出 PDF / Markdown / HTML / 附件。",
+   "description": "飞书批量导出助手：在飞书文档页批量导出 Word / PDF / Markdown / HTML / 附件。",
    "host_permissions": [ "http://127.0.0.1/*", "http://localhost/*", "https://api.weiweiniesi.top/*", "https://*.feishu.cn/*", "https://*.feishu.net/*", "https://*.feishu.cttq.com/*" ],
    "icons": {
       "128": "icons/128.png",
