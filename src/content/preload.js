@@ -1,4 +1,3 @@
-import { stripInvisibleText } from "../lib/text.js";
 import { buildMarkdown } from "./markdown.js";
 import { progressMessage } from "../lib/protocol.js";
 

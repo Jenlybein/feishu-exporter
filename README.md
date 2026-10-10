@@ -139,7 +139,7 @@ npm run dev        # 等价于 vite build --watch
 所有跨上下文消息的类型常量与响应契约集中在 **`src/lib/protocol.js`**：
 
 - `Msg`：消息类型枚举（值等于字符串本身，便于 DevTools 对照）。
-- 响应契约：`ok(value, okKey?)` / `err(error)` / `isOk(res)`。
+- 响应契约：`ok(value, okKey?)` / `err(error)`。
 - 异步分发：`replyAsync(sendResponse, promise, okKey?)` 固定返回 `true`。
 - 构造辅助：`exportCommand(type, payload)`、`progressMessage({...})`。
 

@@ -1,4 +1,4 @@
-import { zipSync, strToU8 } from "fflate";
+import { strToU8 } from "fflate";
 import { sanitizeFilename } from "../../lib/filename.js";
 
 export const ZIP_LEVEL = 6;

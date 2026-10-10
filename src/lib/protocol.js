@@ -86,10 +86,6 @@ export function err(error) {
   return { ok: false, error: message };
 }
 
-export function isOk(response) {
-  return !!(response && response.ok);
-}
-
 // 把异步任务的成功/失败映射成 sendResponse({ ok, ... })，并固定返回 true
 // （告诉 Chrome 这是异步响应，稍后再调用 sendResponse）。
 export function replyAsync(sendResponse, promise, okKey = "filename") {

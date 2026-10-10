@@ -86,29 +86,6 @@ export function posKey(pos) {
   return Array.isArray(pos) ? pos.join(",") : String(pos || "");
 }
 
-// 深度：pos 长度 - 1（根为 0）；pos 缺失时返回 -1，表示「未知层级」。
-export function nodeDepth(pos) {
-  return Array.isArray(pos) && pos.length > 0 ? pos.length - 1 : -1;
-}
-
-// child 的 pos 是否落在 ancestor 子树内（含自身）。
-// 空 ancestor 视为「没有限定范围」，返回 false —— 让调用方必须显式给出范围，
-// 避免 filter 时因漏传参数而把整棵树都当成某节点的子树。
-export function isPosWithin(pos, ancestor) {
-  if (!Array.isArray(pos) || !Array.isArray(ancestor) || ancestor.length === 0) {
-    return false;
-  }
-  if (ancestor.length > pos.length) {
-    return false;
-  }
-  for (let index = 0; index < ancestor.length; index += 1) {
-    if (pos[index] !== ancestor[index]) {
-      return false;
-    }
-  }
-  return true;
-}
-
 // 逐项字典序比较 pos：先到先小的在前，短前缀在前。
 export function comparePos(a, b) {
   const left = Array.isArray(a) ? a : [];
