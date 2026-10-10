@@ -12,13 +12,20 @@
       <div class="sub">仅支持飞书文档页面</div>
     </header>
 
-    <section class="tree-panel">
+    <section class="mode-panel">
+      <select id="export-mode" class="format-select" aria-label="导出方式">
+        <option value="single">单篇导出（当前文档）</option>
+        <option value="batch">批量导出（勾选目录）</option>
+      </select>
+    </section>
+
+    <section class="tree-panel" id="tree-panel" hidden>
       <div class="tree-head">
         <span class="tree-title">目录树</span>
-        <button id="scan-tree" class="ghost-button" type="button">读取目录</button>
+        <button id="scan-tree" class="ghost-button" type="button">刷新目录</button>
       </div>
       <div class="tree-hint" id="tree-hint">
-        读取左侧目录后，勾选要批量导出的文档。勾选父节点会连带选中它下面的所有文档。
+        只含页面上已展开的部分，折叠节点的子节点未加载，需要在飞书页面上手动展开这些节点后，再点一次「刷新目录」。
       </div>
       <div class="tree-toolbar" id="tree-toolbar" hidden>
         <label class="tree-check-all">
@@ -26,7 +33,6 @@
           <span>全选</span>
         </label>
         <span class="tree-count" id="tree-count">已选 0 / 0</span>
-        <button id="tree-print" class="ghost-button" type="button">打印清单</button>
       </div>
       <div class="tree-list" id="tree-list" hidden></div>
     </section>

@@ -32,6 +32,10 @@
 
 * { box-sizing: border-box; }
 
+/* 作者样式里的 display 会盖过 UA 样式表里的 [hidden]，导致 el.hidden=true 失效
+   （目录树容器、工具栏、清单都靠 hidden 控制显隐）。这里显式兜底。 */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   padding: 0;
@@ -64,7 +68,7 @@ body {
   font-size: 11px;
 }
 
-/* 目录树区块：读取按钮 + 选中信息 + 缩进清单 */
+/* 目录树区块：刷新按钮 + 选中信息 + 缩进清单（仅在「批量导出」时显示） */
 .tree-panel {
   margin: 8px 10px 0;
   padding: 10px 12px;
@@ -118,8 +122,6 @@ body {
   font-size: 11px;
   line-height: 1.45;
   color: var(--apple-tertiary-label);
-  /* 提示里含换行（图标图例、折叠告警），按换行断行 */
-  white-space: pre-line;
 }
 
 .tree-toolbar {
@@ -146,11 +148,6 @@ body {
   font-size: 11px;
   font-weight: 500;
   color: var(--apple-blue);
-}
-
-.tree-toolbar .ghost-button {
-  padding: 3px 8px;
-  font-size: 10px;
 }
 
 .tree-list {
@@ -222,6 +219,22 @@ body {
 
 .tree-row.unloaded .tree-row-icon {
   color: var(--apple-orange, #ff9f0a);
+}
+
+/* 导出方式（单篇 / 批量）：与导出操作区同款卡片。
+   必须保留 display: grid —— 下拉框是 grid item 才会被拉伸到满宽；
+   否则 inline-block 的下拉框会按内容宽度撑破卡片。 */
+.mode-panel {
+  margin: 8px 10px 0;
+  padding: 10px 12px;
+  background: var(--apple-card-bg);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-radius: var(--apple-radius);
+  border: 0.5px solid var(--apple-border);
+  box-shadow: var(--apple-shadow);
+  display: grid;
+  gap: 10px;
 }
 
 /* 导出操作区：格式下拉、执行按钮、说明文案各占一行（grid 堆叠） */

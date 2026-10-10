@@ -9,33 +9,26 @@ import {
   isFolderNode,
   isUnloadedFolder,
   parseNodePos,
-  pathTitles,
   selectionStateOf
 } from "../lib/tree-path.js";
 
 const statusEl = document.getElementById("status");
 const progressBar = document.getElementById("progress-bar");
+const exportModeSelect = document.getElementById("export-mode");
 const formatSelect = document.getElementById("export-format");
 const formatHint = document.getElementById("format-hint");
 const runButton = document.getElementById("run-export");
 const scanTreeButton = document.getElementById("scan-tree");
+const treePanelEl = document.getElementById("tree-panel");
 const treeHintEl = document.getElementById("tree-hint");
 const treeToolbarEl = document.getElementById("tree-toolbar");
 const treeCheckAllEl = document.getElementById("tree-check-all");
 const treeCountEl = document.getElementById("tree-count");
-const treePrintButton = document.getElementById("tree-print");
 const treeListEl = document.getElementById("tree-list");
 const KEEP_RENDER_TAB_TIP = "请勿关闭新打开的页面";
 
-const DEFAULT_TREE_HINT =
-  "读取左侧目录后勾选要导出的文档；选「导出为 Markdown」再点「批量导出」，会打包成一个 ZIP。\n" +
-  "（ZIP 里只有勾中的文档：勾了父级目录，它只作为文件夹层级出现，不会再单独生成一份同名的 .md）\n" +
-  "· 点行内其它位置 = 勾选/取消这一行连同它下面整支（含中间层子目录，但跳过 ▸ 未展开的文件夹）；已是全选态再点就整体取消\n" +
-  "· 点复选框 = 只切这一行本身（想精确增删某一篇时用它）\n" +
-  "· 工具栏「全选」= 勾上所有文档（不含父级目录与 ▸ 未展开的文件夹）\n" +
-  "▾ 子目录已展开 / ▸ 子目录未展开（本次未读取，不参与勾选；需要的话在页面上展开后重读）/ · 无子目录";
-// console.table 打太长会拖住 DevTools，超过这个条数只打印并提示。
-const TREE_MAX_PRINT_ROWS = 500;
+const TREE_HINT =
+  "只含页面上已展开的部分，折叠节点的子节点未加载，需要在飞书页面上手动展开这些节点后，再点一次「刷新目录」。";
 
 // 下拉框各选项的说明文案，随选中项显示在操作区下方
 const FORMAT_HINTS = {
@@ -68,12 +61,14 @@ const ui = createReactiveStore(
     statusError: false,
     progress: 0,
     busy: false,
+    // 导出方式：single = 只导出当前打开的这篇；batch = 按目录树勾选批量导出。
+    // 「批量」才会显示目录树容器；默认单篇。
+    mode: "single",
     format: "markdown",
     // —— 目录树（批量导出的「选择源」）——
     treeBusy: false,
     treeNodes: [], // flatten 后的节点数组，带 depth / children / ancestors，已按 pos 排序
-    treeSelectedUids: [], // 已勾选的节点 uid（数组，便于比对与序列化）
-    treeHint: DEFAULT_TREE_HINT
+    treeSelectedUids: [] // 已勾选的节点 uid（数组，便于比对与序列化）
   },
   renderUi
 );
@@ -109,33 +104,39 @@ function renderUi() {
   progressBar.style.width = `${Math.max(0, Math.min(100, Number(ui.progress) || 0))}%`;
 
   const selectedCount = (ui.treeSelectedUids || []).length;
-  const batchReady = ui.format === "markdown" && selectedCount > 0;
+
+  exportModeSelect.value = ui.mode;
+  exportModeSelect.disabled = ui.busy;
 
   formatSelect.value = ui.format;
   formatHint.textContent = formatHintText(selectedCount);
   formatSelect.disabled = ui.busy;
   runButton.disabled = ui.busy;
-  runButton.textContent = ui.busy ? "导出中…" : batchReady ? "批量导出" : "执行";
+  runButton.textContent = ui.busy ? "导出中…" : ui.mode === "batch" ? "批量导出" : "执行";
 
   scanTreeButton.disabled = ui.busy || ui.treeBusy;
-  scanTreeButton.textContent = ui.treeBusy ? "读取中…" : "读取目录";
+  scanTreeButton.textContent = ui.treeBusy ? "刷新中…" : "刷新目录";
+
+  // 目录树容器只在「批量导出」下出现；单篇模式下整块隐藏。
+  treePanelEl.hidden = ui.mode !== "batch";
 
   renderTreePanel();
 }
 
-// 下拉框说明 + 「勾选有没有生效」的提示。
-// 批量是「勾选 + Markdown」的组合：只在 Markdown 下生效，其它格式仍然只导出
-// 当前打开的这篇文档。不把这条规则写在界面上，用户没法知道勾选到底起了什么作用。
+// 下拉框说明 + 「勾选有没有生效」的提示。批量是「批量模式 + Markdown」的组合：只在
+// Markdown 下生效，其它格式仍然只导出当前打开的这篇文档。
 function formatHintText(selectedCount) {
   const base = FORMAT_HINTS[ui.format] || "";
-  const count = Number(selectedCount) || 0;
-  if (count === 0) {
+  if (ui.mode !== "batch") {
     return base;
   }
-  if (ui.format === "markdown") {
-    return `${base}（已勾选 ${count} 篇，点「批量导出」将打包成一个 ZIP）`;
+  if (ui.format !== "markdown") {
+    return `${base}（批量导出目前只支持 Markdown，请把格式切换到 Markdown）`;
   }
-  return `${base}（已勾选 ${count} 篇；批量导出目前只支持 Markdown，其余格式导出的是当前打开的文档）`;
+  const count = Number(selectedCount) || 0;
+  return count > 0
+    ? `${base}（已勾选 ${count} 篇，点「批量导出」将打包成一个 ZIP）`
+    : `${base}（请先在目录树里勾选要导出的文档）`;
 }
 
 renderUi();
@@ -143,7 +144,7 @@ renderUi();
 // ---------- 目录树面板 ----------
 
 function renderTreePanel(force = false) {
-  treeHintEl.textContent = ui.treeHint || DEFAULT_TREE_HINT;
+  treeHintEl.textContent = TREE_HINT;
 
   const nodes = ui.treeNodes || [];
   if (!nodes.length) {
@@ -323,27 +324,7 @@ function setAllChecked(checked) {
     .map((node) => node.uid);
 }
 
-// 已勾选清单 -> console.table（当前阶段的验收手段）。
-function printSelectionManifest() {
-  const selected = new Set(ui.treeSelectedUids);
-  const picked = (ui.treeNodes || []).filter((node) => selected.has(node.uid));
-  console.log(`[目录树] 已勾选 ${picked.length} 篇文档`);
-  if (picked.length) {
-    console.table(
-      picked.slice(0, TREE_MAX_PRINT_ROWS).map((node, index) => ({
-        "#": index + 1,
-        title: node.title,
-        path: pathTitles(node).join(" / "),
-        wikiToken: node.wikiToken
-      }))
-    );
-  }
-  if (picked.length > TREE_MAX_PRINT_ROWS) {
-    console.warn(`[目录树] 其余 ${picked.length - TREE_MAX_PRINT_ROWS} 条未打印。`);
-  }
-}
-
-// 读取目录树：侧边栏 → 内容脚本直连（不走 Service Worker），只读当前 DOM
+// 刷新目录树：侧边栏 → 内容脚本直连（不走 Service Worker），只读当前 DOM
 // 里已经加载出来的节点，不点开折叠节点（改了页面状态容易让用户困惑）。
 async function scanWikiTree() {
   const tab = await ensureFeishuTab();
@@ -352,19 +333,19 @@ async function scanWikiTree() {
   }
 
   ui.treeBusy = true;
-  setStatus("正在读取目录树…");
+  setStatus("正在刷新目录…");
 
   try {
     const response = await sendTabMessageWithAutoInject(tab.id, {
       type: Msg.ENUM_WIKI_TREE
     });
     if (!response || !response.ok) {
-      setStatus(`读取目录树失败：${response?.error || "未知错误"}`, true);
+      setStatus(`刷新目录失败：${response?.error || "未知错误"}`, true);
       return;
     }
     applyTreeResult(response);
   } catch (error) {
-    setStatus(`读取目录树失败：${getErrorMessage(error)}`, true);
+    setStatus(`刷新目录失败：${getErrorMessage(error)}`, true);
   } finally {
     ui.treeBusy = false;
   }
@@ -377,60 +358,31 @@ function applyTreeResult(result) {
   );
   const ordered = flattenTree(built.roots);
 
-  const stats = result.stats || {};
-  const lines = [`已读取 ${ordered.length} 篇文档（只含页面上已展开的部分）`];
-  if (stats.collapsedParents) {
-    lines.push(`另有 ${stats.collapsedParents} 个折叠节点的子节点未加载，未被读取`);
-  }
-  if (stats.elapsedMs != null) {
-    lines.push(`扫描 ${stats.scanned || 0} 个节点，耗时 ${stats.elapsedMs}ms`);
-  }
-  const skipped = (stats.skippedUnknownPos || 0) + (stats.skippedMissingToken || 0);
-  if (skipped) {
-    lines.push(`另有 ${skipped} 个节点无法导出，已跳过`);
-  }
-  for (const warning of result.warnings || []) {
-    lines.push(`· ${warning}`);
-  }
-
   // 目录变了，之前的勾选不再成立：清空选择并刷新子树缓存。
   ui.treeNodes = ordered;
   ui.treeSelectedUids = [];
-  ui.treeHint = lines.join("\n");
   subtreeUidCache.clear();
   renderTreePanel(true);
 
   if (!ordered.length) {
     setStatus(
-      "读取完成，但没有读到任何文档。请确认飞书页面左侧的 Wiki 目录已展开，并刷新页面后重试（控制台有诊断信息）。",
+      "刷新完成，但没有读到任何文档。请确认飞书页面左侧的 Wiki 目录已展开，并刷新页面后重试（控制台有诊断信息）。",
       true
     );
   } else {
-    const tail = stats.collapsedParents
-      ? `还有 ${stats.collapsedParents} 个折叠节点的子目录未读取，需要的话在页面上展开后重读。`
-      : "勾选后点「打印清单」查看选择结果。";
-    setStatus(`目录读取完成：共 ${ordered.length} 篇文档。${tail}`);
+    setStatus("目录已刷新，请勾选要导出的文档。");
   }
   printWholeManifest(result, ordered);
 }
 
+// 目录树现在直接渲染在侧边栏里，控制台只留一条摘要 + 警告，够排障即可。
 function printWholeManifest(result, ordered) {
   console.log(
-    `[目录树] ${result.host || ""} 读取 ${ordered.length} 篇文档`,
+    `[目录树] ${result.host || ""} 刷新到 ${ordered.length} 篇文档`,
     { stats: result.stats, diagnostics: result.diagnostics }
   );
   if (result.warnings && result.warnings.length) {
     console.warn("[目录树] 警告", result.warnings);
-  }
-  if (ordered.length) {
-    console.table(
-      ordered.slice(0, TREE_MAX_PRINT_ROWS).map((node, index) => ({
-        "#": index + 1,
-        depth: node.depth,
-        title: node.title,
-        wikiToken: node.wikiToken
-      }))
-    );
   }
 }
 
@@ -1014,12 +966,16 @@ const EXPORT_ACTIONS = {
   attachments: handleExportAttachments
 };
 
-// 「执行」到底做什么，取决于「有没有勾选」：勾了文档且是 Markdown，就走批量；
-// 否则维持原来的单篇导出（导出当前打开的这一篇）。
+// 「执行」到底做什么，取决于「导出方式」：
+//   批量 → 按目录树勾选打包 ZIP（目前只支持 Markdown，其它格式给出提示）
+//   单篇 → 维持原来的单篇导出（导出当前打开的这一篇）
 function resolveExportAction() {
-  const selectedCount = (ui.treeSelectedUids || []).length;
-  if (ui.format === "markdown" && selectedCount > 0) {
-    return handleBatchMarkdown;
+  if (ui.mode === "batch") {
+    if (ui.format === "markdown") {
+      return handleBatchMarkdown;
+    }
+    return () =>
+      setStatus("批量导出目前只支持 Markdown，请把导出格式切换为 Markdown 后再试。", true);
   }
   return EXPORT_ACTIONS[ui.format];
 }
@@ -1042,6 +998,10 @@ async function runAction(action) {
     setBusy(false);
   }
 }
+
+exportModeSelect.addEventListener("change", () => {
+  ui.mode = exportModeSelect.value;
+});
 
 formatSelect.addEventListener("change", () => {
   ui.format = formatSelect.value;
@@ -1102,10 +1062,6 @@ treeListEl.addEventListener("click", (event) => {
 
 treeCheckAllEl.addEventListener("change", () => {
   setAllChecked(treeCheckAllEl.checked);
-});
-
-treePrintButton.addEventListener("click", () => {
-  printSelectionManifest();
 });
 
 async function bootstrap() {

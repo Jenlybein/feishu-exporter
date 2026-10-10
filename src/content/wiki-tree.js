@@ -254,7 +254,7 @@ export function readWikiTree() {
   if (hiddenSubtrees > 0) {
     warnings.push(
       `有 ${hiddenSubtrees} 个折叠节点的子节点未加载（列表中带 ▸ 标记），本次没有读取。` +
-        "需要在飞书页面上手动展开这些节点后，再点一次「读取目录」。"
+        "需要在飞书页面上手动展开这些节点后，再点一次「刷新目录」。"
     );
   }
   if (nodes.length === 0) {
