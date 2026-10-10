@@ -229,6 +229,103 @@ const getBlockText = (block) => {
               block?.snapshot?.text?.initialAttributedTexts?.text?.[0] || "";
             return typeof snapshotText === "string" ? normalizeTextHtml(snapshotText) : "";
           };
+// 取块的「原始纯文本」：不做 HTML 转义、不把 \n 换成 <br/>。
+// 代码块必须用它——getBlockText 返回的是已转义的 HTML，若再 escapeHtml 会二次转义，
+// 导致 <br/> 变成字面文本、> 变成 &gt;。原始文本保留真实换行，交给 <pre> 呈现。
+const getBlockRawText = (block) => {
+            const zone = block?.zoneState;
+            if (zone?.content?.ops) {
+              return zone.content.ops
+                .map((op) => (typeof op?.insert === "string" ? op.insert : ""))
+                .join("");
+            }
+            if (typeof zone?.allText === "string") {
+              return zone.allText;
+            }
+            const snapshotText =
+              block?.snapshot?.text?.initialAttributedTexts?.text?.[0] || "";
+            return typeof snapshotText === "string" ? snapshotText : "";
+          };
+// 代码块语言。飞书块模型的 TextStyle.language 在不同版本/不同快照层级的落点不完全一致
+// （snapshot.style / snapshot.code.style / …），取值也可能是数字枚举或语言名字符串，
+// 所以这里做「多路径探测 + 数字/字符串双解析」，最后归一化成 Markdown 围栏认识的标识。
+// 枚举编号与飞书开放平台 CodeLanguage 对齐（7=Bash、22=Go、28=JSON、29=Java、
+// 49=Python、52=Ruby、56=SQL、63=TypeScript、67=YAML 等已交叉核对）。下标 0 占位，语言从 1 起。
+const CODE_LANGUAGE_BY_ID = [
+            "",
+            "PlainText", "ABAP", "Ada", "Apache", "Apex", "Assembly", "Bash",
+            "CSharp", "Cpp", "C", "COBOL", "CSS", "CoffeeScript", "D", "Dart",
+            "Delphi", "Django", "Dockerfile", "Erlang", "Fortran", "FoxPro", "Go",
+            "Groovy", "HTML", "HTMLBars", "HTTP", "Haskell", "JSON", "Java",
+            "JavaScript", "Julia", "Kotlin", "LateX", "Lisp", "Logo", "Lua",
+            "MATLAB", "Makefile", "Markdown", "Nginx", "ObjectiveC", "OpenEdgeABL",
+            "PHP", "Perl", "PostScript", "PowerShell", "Prolog", "ProtoBuf",
+            "Python", "R", "RPG", "Ruby", "Rust", "SAS", "SCSS", "SQL", "Scala",
+            "Scheme", "Scratch", "Shell", "Swift", "Thrift", "TypeScript",
+            "VBScript", "VisualBasic", "XML", "YAML", "CMake", "Diff", "Gherkin",
+            "GraphQL", "OpenGLShadingLanguage", "Properties", "Solidity", "TOML"
+          ];
+// 语言名 → Markdown 标识。空串表示「纯文本」，即不输出围栏语言。
+const CODE_LANGUAGE_ALIASES = {
+            "plain text": "", plaintext: "", plain: "", text: "", none: "",
+            "c#": "csharp", csharp: "csharp", "c sharp": "csharp",
+            "c++": "cpp", cpp: "cpp",
+            "objective-c": "objectivec", objectivec: "objectivec", objc: "objectivec",
+            "open edge abl": "openedgeabl",
+            "visual basic": "vb", visualbasic: "vb",
+            "assembly language": "asm", assembly: "asm", asm: "asm",
+            htmlbars: "handlebars",
+            protobuf: "protobuf", proto: "protobuf",
+            "opengl shading language": "glsl", glsl: "glsl",
+            golang: "go", yml: "yaml"
+          };
+const toMarkdownLanguage = (name) => {
+            const key = String(name ?? "").trim().toLowerCase();
+            if (!key) {
+              return "";
+            }
+            if (Object.prototype.hasOwnProperty.call(CODE_LANGUAGE_ALIASES, key)) {
+              return CODE_LANGUAGE_ALIASES[key];
+            }
+            // 兜底：去掉空格与符号（"coffee script" → coffeescript）。
+            return key.replace(/[^a-z0-9]/g, "");
+          };
+// 解析单个候选值：未探到返回 null（继续探下一路径）；能识别则返回标识（可能为空串 = 纯文本）。
+const normalizeCodeLanguage = (raw) => {
+            if (raw === undefined || raw === null || raw === "") {
+              return null;
+            }
+            if (typeof raw === "object") {
+              return normalizeCodeLanguage(raw.id ?? raw.name ?? raw.value ?? raw.language);
+            }
+            const text = String(raw).trim();
+            if (/^\d+$/.test(text)) {
+              const name = CODE_LANGUAGE_BY_ID[Number(text)];
+              return name ? toMarkdownLanguage(name) : null;
+            }
+            return text ? toMarkdownLanguage(text) : null;
+          };
+const getCodeLanguage = (block) => {
+            const candidates = [
+              () => block?.snapshot?.style?.language,
+              () => block?.snapshot?.code?.style?.language,
+              () => block?.snapshot?.code?.language,
+              () => block?.snapshot?.text?.style?.language,
+              () => block?.style?.language,
+              () => block?.code?.style?.language,
+              () => block?.code?.language,
+              () => block?.zoneState?.style?.language,
+              () => block?.snapshot?.zoneState?.style?.language,
+              () => block?.language
+            ];
+            for (const read of candidates) {
+              const language = normalizeCodeLanguage(readValue(read));
+              if (language !== null) {
+                return language;
+              }
+            }
+            return "";
+          };
 const parts = [];
 const processedImageIds = new Set();
 const pushParagraph = (text) => {
@@ -862,14 +959,21 @@ const walk = async (block, listState) => {
                 const level = Number(type.replace("heading", "")) || 1;
                 const content = text.trim();
                 if (content) {
-                  parts.push(`<h${level}>${escapeHtml(content)}</h${level}>`);
+                  // text 已经是转义过的 HTML（含 <strong>/<a>/<br/> 等行内标记），
+                  // 不能再 escapeHtml，否则行内格式会变成字面标签。
+                  parts.push(`<h${level}>${content}</h${level}>`);
                 }
                 break;
               }
               case "code": {
-                const content = text.trim();
+                // 代码块用原始文本（保留真实换行），只转义一次，并包成
+                // <pre><code class="language-xxx">：turndown 的围栏规则只识别 PRE > CODE，
+                // 且语言标识取自 CODE 的 class（裸 <pre> 会被降级成普通段落）。
+                const content = getBlockRawText(block).trim();
                 if (content) {
-                  parts.push(`<pre>${escapeHtml(content)}</pre>`);
+                  const language = getCodeLanguage(block);
+                  const langClass = language ? ` class="language-${escapeAttr(language)}"` : "";
+                  parts.push(`<pre><code${langClass}>${escapeHtml(content)}</code></pre>`);
                 }
                 break;
               }
