@@ -2,7 +2,8 @@
 //
 // 与单篇导出的差别只有两处：单篇导出作用于「用户当前打开的那个标签页」，而批量
 // 需要一个自己能控制、能来回导航的标签页；单篇导出每篇产物各自下载，而批量要把
-// 多篇的 Markdown 与图片汇总到同一个 ZIP 里、并保留原目录结构。
+// 多篇的 Markdown 与图片汇总到同一个 ZIP 里（ZIP 内的层级只由勾选决定，
+// 见 lib/batch-plan.js）。
 //
 // 几个关键取舍：
 //
@@ -122,9 +123,11 @@ async function waitForDocumentModel(tabId, timeoutMs = DOC_MODEL_TIMEOUT_MS) {
 
 // 由计划推导 ZIP 的基名。
 //
-// 用每篇文档的「顶层标题」（pathTitles[0]）而不是目录段：根节点自身的 dir 是空的，
-// 只看 dir 的话，用户全选一棵子树时会被判成「跨了多个顶层」而退回通用名。
-// 所有文档同属一个顶层时才用它的名字，跨多棵子树时退回通用名。
+// 取每篇文档的「最外层有名字的一层」（pathTitles[0]）。计划里的 pathTitles 只由
+// 「被勾选的祖先 + 自身」构成（见 batch-plan.js），所以：
+//   只勾了一篇文档      -> 就是这篇自己的标题；
+//   勾了同一支下的若干篇 -> 是这一支最外层的那个标题；
+//   跨了多个顶层        -> 退回通用名。
 function resolveZipBaseName(items) {
   const roots = new Set();
   for (const item of items) {

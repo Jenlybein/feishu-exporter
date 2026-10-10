@@ -137,6 +137,16 @@ function inlineClassicLibs() {
   // （b）IIFE 因无人引用会被 tree-shake 掉，其内部符号还会被重命名成 Xxx2。
   // 这里无论入口还是被展开的模块，都生成绑定；同一名字只生成一次。
   const replaceImports = (code, dir, state, isEntry) => {
+    // 行尾统一成 LF 再匹配。
+    //
+    // 本仓库在 Windows 上 core.autocrlf=true，工作副本随时可能是 CRLF（git checkout
+    // 就会转一次）。下面两个正则用 `[ \t]*\n` 收敛行尾，多出来的 `\r` 会让整条 import
+    // 匹配不上 —— 入口文件里的 import 残留会被 Rollup 打成 chunk 引用，产物在经典脚本
+    // 环境下直接报错，而报错指向 dist 产物，很难反查到这里；子模块里的残留更隐蔽，
+    // 会把本该内联的 npm 包漏出去。统一在此归一化，入口与递归展开的模块都覆盖。
+    if (code.includes("\r")) {
+      code = code.replace(/\r\n/g, "\n");
+    }
     // import { a, b } from "..."
     code = code.replace(
       /^\s*import\s*\{([^}]*)\}\s*from\s*["']([^"']+)["'];?[ \t]*\n/gm,

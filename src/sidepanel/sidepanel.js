@@ -2,10 +2,12 @@ import { createReactiveStore } from "../lib/reactive.js";
 import { Msg, exportCommand, BATCH_PORT_NAME } from "../lib/protocol.js";
 import { buildBatchPlan } from "../lib/batch-plan.js";
 import {
-  applyNodeChecked,
+  applyCheckedToUids,
   buildTree,
   collectSubtreeUids,
   flattenTree,
+  isFolderNode,
+  isUnloadedFolder,
   parseNodePos,
   pathTitles,
   selectionStateOf
@@ -26,9 +28,12 @@ const treeListEl = document.getElementById("tree-list");
 const KEEP_RENDER_TAB_TIP = "请勿关闭新打开的页面";
 
 const DEFAULT_TREE_HINT =
-  "读取左侧目录后，勾选要批量导出的文档。勾选父节点会连带选中它下面的所有文档。\n" +
-  "▾ 子目录已展开 / ▸ 子目录未展开（本次未读取，需在页面上手动展开后重读）/ · 无子目录\n" +
-  "勾选后选「导出为 Markdown」再点「执行」，会把选中的文档按目录结构打包成一个 ZIP。";
+  "读取左侧目录后勾选要导出的文档；选「导出为 Markdown」再点「批量导出」，会打包成一个 ZIP。\n" +
+  "（ZIP 里只有勾中的文档：勾了父级目录，它只作为文件夹层级出现，不会再单独生成一份同名的 .md）\n" +
+  "· 点行内其它位置 = 勾选/取消这一行连同它下面整支（含中间层子目录，但跳过 ▸ 未展开的文件夹）；已是全选态再点就整体取消\n" +
+  "· 点复选框 = 只切这一行本身（想精确增删某一篇时用它）\n" +
+  "· 工具栏「全选」= 勾上所有文档（不含父级目录与 ▸ 未展开的文件夹）\n" +
+  "▾ 子目录已展开 / ▸ 子目录未展开（本次未读取，不参与勾选；需要的话在页面上展开后重读）/ · 无子目录";
 // console.table 打太长会拖住 DevTools，超过这个条数只打印并提示。
 const TREE_MAX_PRINT_ROWS = 500;
 
@@ -128,7 +133,7 @@ function formatHintText(selectedCount) {
     return base;
   }
   if (ui.format === "markdown") {
-    return `${base}（已勾选 ${count} 篇，点「批量导出」将按目录结构打包成一个 ZIP）`;
+    return `${base}（已勾选 ${count} 篇，点「批量导出」将打包成一个 ZIP）`;
   }
   return `${base}（已勾选 ${count} 篇；批量导出目前只支持 Markdown，其余格式导出的是当前打开的文档）`;
 }
@@ -216,25 +221,39 @@ function rebuildTreeList(nodes) {
   treeListEl.hidden = false;
 }
 
-// 只根据选择集刷新每行的复选框三态与行高亮，不重建 DOM（保留滚动位置）。
+// 只根据选择集刷新每行的复选框状态与行高亮，不重建 DOM（保留滚动位置）。
+//
+// 复选框显示的是「这一行自身」的勾选态，不借用半选态去聚合整棵子树——父级没被勾上
+// 却显示半选会让人以为它自己也会被导出。子树里有没有东西被选，用行底色体现（partial）。
 function updateTreeSelectionUi() {
   const selected = new Set(ui.treeSelectedUids);
   for (const entry of rowByUid.values()) {
-    const state = selectionStateOf(entry.node, selected, subtreeUidsOf(entry.node));
-    entry.checkbox.checked = state === "checked";
-    entry.checkbox.indeterminate = state === "indeterminate";
-    entry.row.classList.toggle("selected", state === "checked");
-    entry.row.classList.toggle("partial", state === "indeterminate");
+    const selfChecked = Boolean(entry.node.uid) && selected.has(entry.node.uid);
+    const subtreeState = selectionStateOf(entry.node, selected, subtreeUidsOf(entry.node));
+    entry.checkbox.checked = selfChecked;
+    entry.checkbox.indeterminate = false;
+    entry.row.classList.toggle("selected", selfChecked);
+    entry.row.classList.toggle("partial", !selfChecked && subtreeState !== "unchecked");
   }
   updateTreeCountHeader(selected);
 }
 
 function updateTreeCountHeader(selected) {
-  const total = (ui.treeNodes || []).length;
+  const all = ui.treeNodes || [];
   const count = selected ? selected.size : ui.treeSelectedUids.length;
-  treeCountEl.textContent = `已选 ${count} / ${total}`;
-  treeCheckAllEl.checked = total > 0 && count === total;
-  treeCheckAllEl.indeterminate = count > 0 && count < total;
+  const folderCount = all.filter(
+    (node) => isFolderNode(node) && selected && selected.has(node.uid)
+  ).length;
+  treeCountEl.textContent = folderCount
+    ? `已选 ${count} 篇（含 ${folderCount} 个父级目录）`
+    : `已选 ${count} 篇`;
+
+  // 工具栏复选框以「所有文档（叶子节点）都已勾上」为准——父级目录不参与，
+  // 否则勾满全部文档后它仍然显示未选满，看起来像坏了。
+  const docUids = all.filter((node) => !isFolderNode(node)).map((node) => node.uid);
+  const docSelected = docUids.filter((uid) => selected && selected.has(uid)).length;
+  treeCheckAllEl.checked = docUids.length > 0 && docSelected === docUids.length;
+  treeCheckAllEl.indeterminate = docSelected > 0 && docSelected < docUids.length;
 }
 
 function subtreeUidsOf(node) {
@@ -249,36 +268,59 @@ function findNodeByUid(uid) {
   return (ui.treeNodes || []).find((node) => node.uid === uid) || null;
 }
 
-// 勾选/取消一个节点：级联作用到它整棵子树。
+// 点复选框：只切这一行自身，不级联。
+//
+// 和「点行」的差别只在于粒度：点行是整支一起动，点复选框是精确增删某一篇
+// （比如整批里只想去掉父级目录那一篇）。
 function setNodeChecked(uid, checked) {
+  ui.treeSelectedUids = Array.from(
+    applyCheckedToUids(new Set(ui.treeSelectedUids), [uid], checked)
+  );
+}
+
+// 级联勾选的目标：整支里**剔除「没展开的文件夹」**。
+//
+// 那些行的子树本次没读到（列表里带 ▸），把它们算进来只会得到内容不完整的导出项。
+// 已展开的目录、以及叶子文档照常参与。想单独要某一篇 ▸ 节点自己的正文，点它的
+// 复选框即可——那是精确操作，不走级联。
+function cascadeTargetsOf(node) {
+  return subtreeUidsOf(node).filter((uid) => {
+    const entry = rowByUid.get(uid);
+    return !entry || !isUnloadedFolder(entry.node);
+  });
+}
+
+// 点行内其它位置：勾选/取消**这一行连同它整棵子树**（目录自己也在这支里，
+// 但「没展开的文件夹」被跳过）。已是整支全选态就整体取消。
+function toggleRowDocs(uid) {
   const node = findNodeByUid(uid);
   if (!node) {
     return;
   }
-  const next = applyNodeChecked(
-    new Set(ui.treeSelectedUids),
-    node,
-    checked,
-    subtreeUidsOf(node)
-  );
-  ui.treeSelectedUids = Array.from(next);
-}
-
-// 点一行：已是全选态就整体取消，否则整体选中。
-function toggleNodeCheck(uid) {
-  const node = findNodeByUid(uid);
-  if (!node) {
+  const targets = cascadeTargetsOf(node);
+  if (!targets.length) {
+    // 整支都是没展开的文件夹（比如点了一行 ▸）：没有可级联的目标，不改状态，
+    // 避免留下一个「点了却没内容」的假勾选。
     return;
   }
   const selected = new Set(ui.treeSelectedUids);
-  const state = selectionStateOf(node, selected, subtreeUidsOf(node));
-  setNodeChecked(uid, state !== "checked");
+  const allOn = targets.every((targetUid) => selected.has(targetUid));
+  ui.treeSelectedUids = Array.from(
+    applyCheckedToUids(selected, targets, !allOn)
+  );
 }
 
+// 全选 = 勾上所有**文档**（叶子节点）。父级目录不随全选一起被灌进来——这是用户
+// 最初的诉求；「没展开的文件夹」自然也在其中（`isFolderNode` 已覆盖它们）。
+// 某支目录想连它自己一起要，点那一行即可；某一篇 ▸ 节点想单独要，点它的复选框。
 function setAllChecked(checked) {
-  ui.treeSelectedUids = checked
-    ? (ui.treeNodes || []).map((node) => node.uid)
-    : [];
+  if (!checked) {
+    ui.treeSelectedUids = [];
+    return;
+  }
+  ui.treeSelectedUids = (ui.treeNodes || [])
+    .filter((node) => !isFolderNode(node) && !isUnloadedFolder(node))
+    .map((node) => node.uid);
 }
 
 // 已勾选清单 -> console.table（当前阶段的验收手段）。
@@ -913,10 +955,15 @@ async function handleBatchMarkdown() {
   const requestId = beginExport("markdown", tab.id);
   startBatchKeepAlive();
 
-  const skippedNote = plan.skipped.length ? `，另跳过 ${plan.skipped.length} 篇非文档` : "";
+  const skippedNote = plan.skipped.length ? `，另跳过 ${plan.skipped.length} 个非文档节点` : "";
+  // 勾了父级目录时，「勾选数」会多出那些只作目录的节点。这里点明一下，否则用户会
+  // 以为漏导了（勾了 8 篇却只导 5 篇）。
+  const folderNote = plan.stats.foldersOnly
+    ? `，另有 ${plan.stats.foldersOnly} 个文件夹只作目录层级、不单独导出`
+    : "";
   setProgress(2);
   setStatus(
-    `开始批量导出 ${plan.items.length} 篇文档${skippedNote}…\n` +
+    `开始批量导出 ${plan.items.length} 篇文档${folderNote}${skippedNote}…\n` +
       `导出期间会短暂打开一个后台窗口，请不要关闭它。`
   );
 
@@ -1044,11 +1091,13 @@ treeListEl.addEventListener("click", (event) => {
     return;
   }
   if (check) {
+    // 复选框 = 只切这一行自身（想精确增删某一篇时用它）。
     setNodeChecked(uid, check.checked);
     return;
   }
-  // 点行（标题、图标、空白处）：以「当前是否为全选态」决定整体勾选还是取消。
-  toggleNodeCheck(uid);
+  // 点行（标题、图标、空白处）：勾选/取消它连同整棵子树，目录自己也在这支里，
+  // 但跳过「没展开的文件夹」（子树本次没读到，不入清单）。
+  toggleRowDocs(uid);
 });
 
 treeCheckAllEl.addEventListener("change", () => {

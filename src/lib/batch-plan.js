@@ -102,17 +102,46 @@ export function buildBatchPlan(nodes, selectedUids, options = {}) {
   const { allocate, reserve } = createNameAllocator();
   // 节点 uid -> 它在「所在目录」里占用的名字。
   //
-  // 一张表同时服务两种角色：既是某个子节点的目录段，又是它自己的文档名。飞书 wiki
-  // 里每个节点本身就是一篇页面（有子节点的节点照样有正文），全选时两种情况会同时
-  // 发生——分成两张表的话，同一个节点会被分配出「整理」和「整理 (2)」两个名字，
-  // 目录与文件就对不上了。
+  // 目录段名与文档名共用一张表：两者落在同一个作用域（所在目录）里，必须互不冲突
+  // （`整理` 这个目录段与同层的 `整理.md` 不能各算各的）。按 uid 缓存段名还保证同一个
+  // 父目录被多个子节点引用时只消歧一次，不会各自算出 `整理 (2)`。
   const nameByUid = new Map();
+
+  // 「只作目录」的勾选节点 —— 本次不作为一篇文档去抓。
+  //
+  // 飞书 wiki 里每个节点本身就是一篇页面，所以勾父级时它同时扮演两种角色：既是下面
+  // 内容的「文件夹」，也是一篇有正文的「文档」。用户要的只有前者：勾一个文件夹，导出
+  // 的是它下面的内容，而不是再多出一个与文件夹同名的 .md（更糟的是，纯目录页抓出来
+  // 往往是空的，会在进度里一路显示「正在导出：某文件夹」最后报失败）。
+  //
+  // 判定「它这次是不是只当目录」= 它下面还有勾中的内容，即它出现在某个已勾选节点的
+  // 祖先链上。这样的节点只承担 ZIP 里的目录层级。
+  // 反过来，只勾了它、底下什么都没有勾（单独点它的复选框），那它就是这次唯一要导的
+  // 东西，照常导出——保留「父级也能单独导出」这条路径。
+  const foldersOnly = new Set();
+  const allNodes = Array.isArray(nodes) ? nodes : [];
+  for (const node of allNodes) {
+    if (!node || !node.uid || !selected.has(node.uid)) {
+      continue;
+    }
+    for (const ancestor of node.ancestors || []) {
+      if (ancestor && ancestor.uid && selected.has(ancestor.uid)) {
+        foldersOnly.add(ancestor.uid);
+      }
+    }
+  }
 
   const items = [];
   const skipped = [];
 
-  for (const node of Array.isArray(nodes) ? nodes : []) {
+  for (const node of allNodes) {
     if (!node || !node.uid || !selected.has(node.uid)) {
+      continue;
+    }
+    // 只作目录：ZIP 里它会作为下属文档的路径前缀出现（见下面的祖先循环），但不再
+    // 生成自己的 .md。不计入 skipped —— 用户并没有「想导又没导成」，那会让报告里
+    // 平白多出一批「已跳过」。
+    if (foldersOnly.has(node.uid)) {
       continue;
     }
     if (!node.wikiToken) {
@@ -144,17 +173,30 @@ export function buildBatchPlan(nodes, selectedUids, options = {}) {
       continue;
     }
 
-    // 逐级铺出目录段。scopeKey 用「已确定的段序列」拼成，天然区分不同父目录；
-    // 段名按祖先 uid 缓存，同一父目录下的多个子节点不会各自消歧出不同名字。
+    // 逐级铺出目录段：**只有本次也被勾选的祖先**才作为文件夹出现在 ZIP 里。
+    //
+    // 用户明确要求：没勾上的父级不要把文件夹层级带进来（「还是把全部父级文件夹都
+    // 带上了，即使我没选上」）。所以只勾叶子文档时结果是**完全扁平**的；勾上了父级
+    // 它才会以文件夹的形式出现在路径里——层级反映的是你的勾选，而不是飞书的目录树
+    // 本身。注意「勾上父级」在这里的作用正是「把它变成文件夹」：它自己不再作为一篇
+    // 文档导出（见上面的 foldersOnly），只留下这个目录层级。
+    //
+    // scopeKey 用「已确定的段序列」拼成，天然区分不同父目录；段名按祖先 uid 缓存，
+    // 同一父目录下的多个子节点不会各自消歧出不同名字。
     const segments = [];
+    const segmentTitles = [];
     let scopeKey = "";
     for (const ancestor of node.ancestors || []) {
+      if (!selected.has(ancestor.uid)) {
+        continue;
+      }
       let segment = nameByUid.get(ancestor.uid);
       if (!segment) {
         segment = allocate(scopeKey, sanitizePathSegment(ancestor.title));
         nameByUid.set(ancestor.uid, segment);
       }
       segments.push(segment);
+      segmentTitles.push(ancestor.title || "");
       scopeKey = scopeKey ? `${scopeKey}/${segment}` : segment;
     }
     const dir = segments.join("/");
@@ -171,8 +213,9 @@ export function buildBatchPlan(nodes, selectedUids, options = {}) {
     reserve(scopeKey, `${baseName}.md`);
     reserve(scopeKey, assetsLeaf);
 
-    const pathTitles = (node.ancestors || []).map((item) => item.title || "");
-    pathTitles.push(node.title || "");
+    // 与 dir 保持一致：只含「被勾选的祖先 + 自身」。ZIP 基名取 pathTitles[0]，
+    // 只勾一篇时它就等于这篇的标题。
+    const pathTitles = segmentTitles.concat([node.title || "未命名文档"]);
 
     items.push({
       uid: node.uid,
@@ -197,6 +240,9 @@ export function buildBatchPlan(nodes, selectedUids, options = {}) {
       selected: selected.size,
       planned: items.length,
       skipped: skipped.length,
+      // 勾选中「只作目录、未单独导出」的节点数。侧边栏用它解释「勾了 N 篇，为什么
+      // 实际导出 M 篇」。
+      foldersOnly: foldersOnly.size,
       folders: new Set(items.map((item) => item.dir).filter(Boolean)).size
     }
   };

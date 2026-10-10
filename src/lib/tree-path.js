@@ -8,7 +8,7 @@
 // 因此即便采集到的是散乱、乱序、跨轮次合并的一堆节点，也能凭 pos 无损重建目录树，
 // 不依赖父子节点在 DOM 里同时可见（虚拟滚动下它们经常不同时可见）。
 //
-// 批量导出时目录结构要落到 ZIP 的相对路径上，本模块同时提供路径段净化与
+// 批量导出时文档要落到 ZIP 的相对路径上，本模块同时提供路径段净化与
 // 同层重名消歧，避免解压时被互相覆盖。
 
 import { sanitizeFilename } from "./filename.js";
@@ -206,8 +206,12 @@ export function flattenTree(roots) {
   return out;
 }
 
-// 收集「节点自身 + 全部后代」的 uid（前序）。用于侧边栏勾选时的级联：
-// 勾一个节点 = 连它整棵子树一起勾上。uid 为空的节点跳过（无法参与导出）。
+// 收集「节点自身 + 全部后代」的 uid（前序）。
+//
+// 两处用途，语义一致（用户 2026-10-11 定稿）：
+//   1. 级联勾选——点一行 = 勾上它连同整棵子树（目录自己也在这支里，不排除）；
+//   2. 渲染——判断该行「整支被选到什么程度」，用于行高亮。
+// uid 为空的节点跳过（无法参与导出）。
 export function collectSubtreeUids(node) {
   const out = [];
   const visit = (item) => {
@@ -223,6 +227,35 @@ export function collectSubtreeUids(node) {
   };
   visit(node);
   return out;
+}
+
+// 是不是「目录节点」——即带子节点的节点。
+//
+// 飞书 wiki 里每个节点本身都有正文，所以「目录」只是使用者的心智模型：对用户来说，
+// 有子节点的行就是文件夹。判定同时看两个来源：DOM 里箭头是否有 icon（hasChildren），
+// 以及 pos 重建后是否真挂上了子节点——只要有一个成立就按目录处理，避免箭头识别失败
+// 时把一整个子树误当成叶子文档。
+//
+// 注意：这里只用来区分「文件夹行 / 文档行」的观感与「全选」的取数范围，
+// **不再**用来把目录排除在勾选之外——用户明确要求目录自己也随级联被选中。
+export function isFolderNode(node) {
+  if (!node) {
+    return false;
+  }
+  return node.hasChildren === true || (Array.isArray(node.children) && node.children.length > 0);
+}
+
+// 「没展开的文件夹」——DOM 里它显示有子节点（箭头带 --has-icon），但子节点没出现在
+// 本次读取的清单里（侧边栏里带 ▸ 标记）。
+//
+// 这类节点自身的正文能读，但它下面的内容本次根本没拿到，批量勾选时把它算进来
+// 只会得到一份「看起来有目录、实际是空的」结果。用户 2026-10-11 要求：批量全选时
+// 跳过它们，想单独要这一篇就点它自己的复选框（那是精确操作，不在级联范围里）。
+export function isUnloadedFolder(node) {
+  if (!node || node.hasChildren !== true) {
+    return false;
+  }
+  return !(Array.isArray(node.children) && node.children.length > 0);
 }
 
 // 判断某节点相对选择集的勾选状态，用于渲染复选框的三态：
@@ -248,13 +281,18 @@ export function selectionStateOf(node, selected, uids) {
   return hit === list.length ? "checked" : "indeterminate";
 }
 
-// 计算「把某节点整棵子树勾选/取消」之后的新选择集。入参 selected 为 Set，
+// 计算「把指定的一批 uid 全部勾上/取消」之后的新选择集。入参 selected 为 Set，
 // 不改动它（纯函数），返回新 Set，便于侧边栏把它提升为新的响应式状态。
-// uids 可显式传入（调用方已缓存子树 uid 列表时避免重复遍历）。
-export function applyNodeChecked(selected, node, checked, uids) {
+//
+// 侧边栏有两种用法，都靠显式传入 uid 列表复用它：
+//   点复选框 -> [该行自己的 uid]（精准切一行，用于单独增删某一篇）
+//   点行     -> collectSubtreeUids(node)（级联它连同整棵子树）
+export function applyCheckedToUids(selected, uids, checked) {
   const next = new Set(selected);
-  const list = Array.isArray(uids) ? uids : collectSubtreeUids(node);
-  for (const uid of list) {
+  for (const uid of Array.isArray(uids) ? uids : []) {
+    if (!uid) {
+      continue;
+    }
     if (checked) {
       next.add(uid);
     } else {

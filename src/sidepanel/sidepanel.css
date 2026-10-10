@@ -177,7 +177,12 @@ body {
 
 .tree-row.selected { background: rgba(0, 122, 255, 0.1); }
 
-.tree-row.partial { background: rgba(0, 122, 255, 0.04); }
+/* 复选框只反映「这一行自身」，父级目录不随级联被选上、也不显示半选；
+   子树里有没有东西被选改由行底色 + 左侧竖条表达，避免父级看起来「被选中了」。 */
+.tree-row.partial {
+  background: rgba(0, 122, 255, 0.06);
+  box-shadow: inset 2px 0 0 rgba(0, 122, 255, 0.35);
+}
 
 .tree-row-check {
   flex: 0 0 auto;
