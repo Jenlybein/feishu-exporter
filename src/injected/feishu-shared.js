@@ -22,7 +22,7 @@
         if (await checker()) {
           return true;
         }
-      } catch (error) {
+      } catch {
         // 忽略检查异常
       }
       await sleep(intervalMs);
@@ -33,7 +33,7 @@
   const readValue = (getter) => {
     try {
       return getter();
-    } catch (error) {
+    } catch {
       return null;
     }
   };
@@ -44,7 +44,7 @@
         return [];
       }
       return Object.keys(value).slice(0, limit);
-    } catch (error) {
+    } catch {
       return [];
     }
   };
@@ -62,7 +62,7 @@
   const readCanvasDataUrl = (canvas) => {
     try {
       return canvas.toDataURL("image/png");
-    } catch (error) {
+    } catch {
       return null;
     }
   };
@@ -82,7 +82,7 @@
           "image/png",
           1
         );
-      } catch (error) {
+      } catch {
         resolve(null);
       }
     });
@@ -149,7 +149,7 @@
             }
           }
           resolve(visible === 0 || nonBlack === 0);
-        } catch (error) {
+        } catch {
           resolve(false);
         }
       };
@@ -224,7 +224,7 @@
       }
       const blob = await response.blob();
       return await readBlobAsDataUrl(blob);
-    } catch (error) {
+    } catch {
       return null;
     }
   };
@@ -240,7 +240,7 @@
     const result = await new Promise((resolve) => {
       try {
         manager.fetch({ token, isHD: false }, {}, (data) => resolve(data));
-      } catch (error) {
+      } catch {
         resolve(null);
       }
     });
@@ -258,7 +258,7 @@
       }
       const blob = await response.blob();
       return await readBlobAsDataUrl(blob);
-    } catch (error) {
+    } catch {
       return null;
     }
   };
@@ -320,7 +320,7 @@
     } else if (typeof svg !== "string") {
       try {
         svg = svg.toString();
-      } catch (error) {
+      } catch {
         return null;
       }
     }
@@ -359,7 +359,7 @@
         if (dataUrl && !(await isBlankImageDataUrl(dataUrl))) {
           return dataUrl;
         }
-      } catch (error) {
+      } catch {
         // 换下一组参数重试
       }
     }
@@ -377,7 +377,7 @@
       for (const id of candidates) {
         try {
           await locate(id);
-        } catch (error) {
+        } catch {
           // 忽略定位失败，继续尝试下一个候选 id
         }
       }

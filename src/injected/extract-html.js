@@ -152,7 +152,7 @@ const safeDecode = (value) => {
             }
             try {
               return decodeURIComponent(value);
-            } catch (error) {
+            } catch {
               return String(value);
             }
           };
@@ -168,7 +168,7 @@ const parseInlineComponent = (attributes) => {
                   url: payload.data?.raw_url || ""
                 };
               }
-            } catch (error) {
+            } catch {
               return null;
             }
             return null;
@@ -577,7 +577,7 @@ const getSheetData = (sheetId) => {
                   return sheet;
                 }
               }
-            } catch (error) {
+            } catch {
               return null;
             }
             return null;
@@ -619,7 +619,7 @@ const buildSheetImageMap = (sheet) => {
                 const fallback = sheet?._dataModel?.image || sheet?.image;
                 appendImageMap(fallback);
               }
-            } catch (error) {
+            } catch {
             }
             return map;
           };
@@ -798,7 +798,7 @@ const preloadSpecialBlocks = async (root) => {
               if (recordId) {
                 try {
                   await locate(recordId);
-                } catch (error) {
+                } catch {
                 }
               }
               const blockType = getBlockType(block);

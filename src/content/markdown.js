@@ -27,7 +27,7 @@ async function imageSrcToDataUrl(src) {
     }
     const blob = await response.blob();
     return await readBlobAsDataUrl(blob);
-  } catch (error) {
+  } catch {
     return "";
   }
 }
@@ -38,7 +38,7 @@ function canvasToDataUrl(canvas) {
   }
   try {
     return canvas.toDataURL("image/png");
-  } catch (error) {
+  } catch {
     return "";
   }
 }
@@ -56,7 +56,7 @@ function svgToDataUrl(svg) {
       svgText = svgText.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"');
     }
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}`;
-  } catch (error) {
+  } catch {
     return "";
   }
 }
@@ -156,7 +156,7 @@ export function buildMarkdown() {
   let body = "";
   try {
     body = getMarkdownConverter().turndown(root);
-  } catch (error) {
+  } catch {
     body = "";
   }
   body = stripInvisibleText(body).replace(/\n{3,}/g, "\n\n").trim();

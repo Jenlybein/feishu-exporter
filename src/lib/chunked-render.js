@@ -29,7 +29,7 @@ export function createChunkedRenderHandler({ renderType, onComplete, onError }) 
         const totalChunks = Number(message.totalChunks) || 0;
         incomingHtmlChunks.set(requestId, {
           title: message.title || "",
-          chunks: new Array(totalChunks || 0)
+          chunks: Array.from({ length: totalChunks || 0 })
         });
         return;
       }

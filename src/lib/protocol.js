@@ -34,8 +34,9 @@ export const Msg = {
   DOWNLOAD_MARKDOWN: "DOWNLOAD_MARKDOWN",
 
   // 批量：勾选目录树里的一批文档，逐篇抓取后打包成一个 ZIP。
-  // 消息体带 plan（见 lib/batch-plan.js），成功响应返回 { ok, result }。
-  EXPORT_BATCH_MARKDOWN: "EXPORT_BATCH_MARKDOWN",
+  // 消息体带 plan（见 lib/batch-plan.js）与 format（markdown / html / word / pdf），
+  // 成功响应返回 { ok, result }。格式决定用哪个渲染页与产物扩展名。
+  EXPORT_BATCH: "EXPORT_BATCH",
 
   // —— 侧边栏 → 内容脚本 的导出命令（需异步响应 { ok, ... }）——
   EXPORT_MARKDOWN: "EXPORT_MARKDOWN",
@@ -59,7 +60,7 @@ export const Msg = {
 // 用于 EXPORT_HANDLERS 分发表决定 ok 字段名。
 export const EXPORT_RESULT_KEY = {
   [Msg.EXPORT_ATTACHMENTS]: "result",
-  [Msg.EXPORT_BATCH_MARKDOWN]: "result"
+  [Msg.EXPORT_BATCH]: "result"
 };
 
 // 批量导出的长连接端口名。

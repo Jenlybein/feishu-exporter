@@ -4,7 +4,7 @@
 //
 // windowFn 的返回值可以是 Promise —— chrome.scripting.executeScript 会等待它
 // resolve 后再把结果交回来（页面侧提取脚本内部有异步等待时正是靠这一点）。
-export async function injectAndRun(tabId, files, windowFn, args = []) {
+async function injectAndRun(tabId, files, windowFn, args = []) {
   await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files });
   const results = await chrome.scripting.executeScript({
     target: { tabId },

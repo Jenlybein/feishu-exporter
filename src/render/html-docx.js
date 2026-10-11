@@ -97,7 +97,7 @@ function dataUrlToBytes(dataUrl) {
       bytes[i] = binary.charCodeAt(i);
     }
     return bytes;
-  } catch (error) {
+  } catch {
     return null;
   }
 }
@@ -152,7 +152,7 @@ async function imageRunFromElement(imgEl) {
       context.drawImage(image, 0, 0, canvasWidth, canvasHeight);
       type = "png";
       bytes = dataUrlToBytes(canvas.toDataURL("image/png"));
-    } catch (error) {
+    } catch {
       return null;
     }
   }
@@ -236,7 +236,7 @@ async function inlineRuns(parent, style) {
 
 // —— 块级 ——
 const makeParagraph = (options, ctx) =>
-  new Paragraph({ ...(ctx?.paragraphStyle || {}), ...options });
+  new Paragraph({ ...ctx?.paragraphStyle, ...options });
 
 function codeBlockParagraph(preEl) {
   const codeEl = preEl.querySelector("code") || preEl;

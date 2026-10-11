@@ -76,7 +76,7 @@ function collectNodeGroups() {
   let all = [];
   try {
     all = Array.from(document.querySelectorAll(`[${NODE_UID_ATTR}]`));
-  } catch (error) {
+  } catch {
     return groups;
   }
 
@@ -91,7 +91,7 @@ function collectNodeGroups() {
       nested = element.parentElement
         ? element.parentElement.closest(`[${NODE_UID_ATTR}]`)
         : null;
-    } catch (error) {
+    } catch {
       nested = null;
     }
     if (nested && nested !== element) {
@@ -136,7 +136,7 @@ function readNodeAttr(element, attr) {
   let child = null;
   try {
     child = element.querySelector(`[${attr}]`);
-  } catch (error) {
+  } catch {
     child = null;
   }
   return child ? child.getAttribute(attr) || "" : "";

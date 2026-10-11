@@ -19,7 +19,7 @@ export function normalizeMarkdownImageDestinations(markdown) {
 }
 
 // 把可能带子目录的下载名逐段净化，避免非法字符导致 chrome.downloads 报错。
-export function sanitizeDownloadPath(filename, fallbackName) {
+function sanitizeDownloadPath(filename, fallbackName) {
   const fallback = fallbackName || "feishu-document";
   const parts = String(filename || "")
     .replace(/\\/g, "/")

@@ -22,7 +22,7 @@ import { Msg, err } from "./lib/protocol.js";
 if (typeof globalThis.__feishuExporterUnlisten === "function") {
   try {
     globalThis.__feishuExporterUnlisten();
-  } catch (error) {
+  } catch {
     // 忽略：注销失败不影响后续注册
   }
 }
@@ -84,7 +84,7 @@ chrome.runtime.onMessage.addListener(contentMessageListener);
 globalThis.__feishuExporterUnlisten = () => {
   try {
     chrome.runtime.onMessage.removeListener(contentMessageListener);
-  } catch (error) {
+  } catch {
     // 忽略
   }
 };

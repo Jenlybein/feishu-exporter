@@ -66,7 +66,7 @@ export async function exportHtml(tabId, title, requestId) {
 // 建一次、销一次标签页，光标签页生命周期就要几十秒。所以这里把「建页」「推 HTML」
 // 「等结果」「关页」拆开，批量时一个渲染页连续服务多篇。
 
-export function createRenderRequestId(prefix) {
+function createRenderRequestId(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
@@ -90,7 +90,7 @@ export function closeTab(tabId) {
   }
   try {
     chrome.tabs.remove(tabId);
-  } catch (error) {
+  } catch {
     // 忽略：标签页已不存在
   }
 }
@@ -125,6 +125,62 @@ export async function renderMarkdownViaTab(
     markdown: chunkedResponse.markdown || "",
     images: Array.isArray(chunkedResponse.images) ? chunkedResponse.images : []
   };
+}
+
+// 让渲染页把一份 HTML 转成 docx，返回 { dataUrl }（二进制以 data:URL 回传，
+// 因为 Service Worker 里没有 URL.createObjectURL）。
+// 与 renderMarkdownViaTab 同构：renderTabId 由调用方持有，本函数不建/销标签页。
+export async function renderWordViaTab(
+  renderTabId,
+  { title, html, timeoutMs = 180000 }
+) {
+  const renderRequestId = createRenderRequestId("word-render");
+  const responsePromise = waitForRenderResult(renderRequestId, timeoutMs);
+  try {
+    await sendChunkedHtmlToRenderTab({
+      targetTabId: renderTabId,
+      renderType: "word",
+      title,
+      html,
+      requestId: renderRequestId
+    });
+  } catch (error) {
+    responsePromise.catch(() => {});
+    throw error;
+  }
+
+  const chunkedResponse = await responsePromise;
+  if (!chunkedResponse || !chunkedResponse.ok || !chunkedResponse.dataUrl) {
+    throw new Error(chunkedResponse?.error || "无法生成 Word 文档");
+  }
+  return { dataUrl: chunkedResponse.dataUrl };
+}
+
+// 让 PDF 渲染页把一份 HTML 铺进页面并等它「可打印」。
+//
+// 与上面两者不同：PDF 渲染页没有结果回传通道，它渲染完只发一条 PDF_RENDER_READY。
+// 本函数只负责「铺内容 + 等就绪」，真正的打印由调用方对同一个 renderTabId 调
+// printToPdfData 完成（批量要收集数据、单篇要直接下载，打印后的去向不同）。
+export async function renderPdfViaTab(
+  renderTabId,
+  { title, html, timeoutMs = 60000 }
+) {
+  const readyPromise = waitForRenderReady(renderTabId, timeoutMs);
+  const renderRequestId = createRenderRequestId("pdf-render");
+  await sendChunkedHtmlToRenderTab({
+    targetTabId: renderTabId,
+    renderType: "pdf",
+    title,
+    html,
+    requestId: renderRequestId
+  });
+
+  try {
+    await readyPromise;
+  } catch {
+    // 就绪通知偶有丢失：不当作失败，等一拍后由调用方仍去尝试打印（与单篇一致）。
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
 }
 
 // 把提取到的 HTML 丢给 md-render 标签页，分块回传后由 turndown 转成 Markdown。
@@ -198,7 +254,7 @@ export async function exportMarkdownFromModel(tabId, title, requestId) {
   let result;
   try {
     result = await extractMarkdownFromHtml(tabId, title);
-  } catch (error) {
+  } catch {
     sendExportProgress(
       tabId,
       requestId,
@@ -305,21 +361,12 @@ export async function exportWordFromHtml(tabId, title, requestId) {
   let dataUrl = "";
   try {
     renderTabId = await openRenderTab("src/render/word-render.html");
-
-    const renderRequestId = createRenderRequestId("word-render");
-    const responsePromise = waitForRenderResult(renderRequestId, 180000);
-    await sendChunkedHtmlToRenderTab({
-      targetTabId: renderTabId,
-      renderType: "word",
+    const rendered = await renderWordViaTab(renderTabId, {
       title: resolvedTitle,
       html: result.html,
-      requestId: renderRequestId
+      timeoutMs: 180000
     });
-    const chunkedResponse = await responsePromise;
-    if (!chunkedResponse || !chunkedResponse.ok || !chunkedResponse.dataUrl) {
-      throw new Error(chunkedResponse?.error || "无法生成 Word 文档");
-    }
-    dataUrl = chunkedResponse.dataUrl;
+    dataUrl = rendered.dataUrl;
   } finally {
     closeTab(renderTabId);
   }
@@ -400,26 +447,16 @@ export async function exportPdfFromHtml(tabId, title, requestId) {
     renderTabId = await openRenderTab("src/render/pdf-render.html");
 
     sendExportProgress(tabId, requestId, "pdf", 65, "正在渲染 PDF 页面...");
-    const readyPromise = waitForRenderReady(renderTabId, 60000);
-    const renderRequestId = createRenderRequestId("pdf-render");
-    await sendChunkedHtmlToRenderTab({
-      targetTabId: renderTabId,
-      renderType: "pdf",
+    await renderPdfViaTab(renderTabId, {
       title: result.title || title,
       html: result.html,
-      requestId: renderRequestId
+      timeoutMs: 60000
     });
-
-    try {
-      await readyPromise;
-    } catch (error) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
     sendExportProgress(tabId, requestId, "pdf", 85, "正在生成 PDF 文件...");
     let filename = "";
     try {
       filename = await exportPdf(renderTabId, result.title || title);
-    } catch (error) {
+    } catch {
       sendExportProgress(tabId, requestId, "pdf", 88, "生成失败，尝试直接打印文档...");
       filename = await exportPdf(tabId, title);
     }

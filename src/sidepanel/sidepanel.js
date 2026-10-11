@@ -1,6 +1,6 @@
 import { createReactiveStore } from "../lib/reactive.js";
 import { Msg, exportCommand, BATCH_PORT_NAME } from "../lib/protocol.js";
-import { buildBatchPlan } from "../lib/batch-plan.js";
+import { buildBatchPlan, FORMAT_EXTENSIONS } from "../lib/batch-plan.js";
 import {
   applyCheckedToUids,
   buildTree,
@@ -39,16 +39,13 @@ const FORMAT_HINTS = {
   word: "下载 .docx 文档（保留标题/表格/代码块/图片）"
 };
 
-const DEFAULT_BACKEND_URL = "https://api.weiweiniesi.top";
-const CLIENT_VERSION = (() => {
-  try {
-    return chrome.runtime.getManifest().version || "unknown";
-  } catch (error) {
-    return "unknown";
-  }
-})();
-const ANONYMOUS_ID_KEY = "anonymousId";
-let anonymousId = "";
+// 格式的中文名，用于状态栏/完成文案（与 FORMAT_EXTENSIONS 的键一致）。
+const FORMAT_LABELS = {
+  markdown: "Markdown",
+  html: "HTML",
+  word: "Word",
+  pdf: "PDF"
+};
 
 // —— UI 状态：唯一数据源 ——
 // 以前是「每次状态变化手动逐个赋值 DOM」：几个 setXxxUi 函数互相调用、各自 set
@@ -123,15 +120,17 @@ function renderUi() {
   renderTreePanel();
 }
 
-// 下拉框说明 + 「勾选有没有生效」的提示。批量是「批量模式 + Markdown」的组合：只在
-// Markdown 下生效，其它格式仍然只导出当前打开的这篇文档。
+// 下拉框说明 + 「勾选有没有生效」的提示。
+//
+// 批量 = 「批量模式 + 支持批量的格式」：Markdown / HTML / Word / PDF 都能打包成一个
+// ZIP，附件仍只支持单篇，因此切到附件时要明确说明，别让用户点下去才发现没反应。
 function formatHintText(selectedCount) {
   const base = FORMAT_HINTS[ui.format] || "";
   if (ui.mode !== "batch") {
     return base;
   }
-  if (ui.format !== "markdown") {
-    return `${base}（批量导出目前只支持 Markdown，请把格式切换到 Markdown）`;
+  if (!FORMAT_EXTENSIONS[ui.format]) {
+    return `${base}（批量导出暂不支持该格式，请切换到 Markdown / HTML / Word / PDF）`;
   }
   const count = Number(selectedCount) || 0;
   return count > 0
@@ -423,109 +422,9 @@ function getErrorMessage(error, fallback = "请求失败") {
     if (text && text !== "{}") {
       return text;
     }
-  } catch (jsonError) {
+  } catch {
   }
   return fallback;
-}
-
-function storageGet(values) {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(values, (result) => resolve(result));
-  });
-}
-
-function storageSet(values) {
-  return new Promise((resolve, reject) => {
-    chrome.storage.local.set(values, () => {
-      const err = chrome.runtime.lastError;
-      if (err) {
-        reject(new Error(err.message));
-        return;
-      }
-      resolve();
-    });
-  });
-}
-
-async function fetchJson(url, options) {
-  const mergedHeaders = {
-    "Content-Type": "application/json",
-    ...(options?.headers || {})
-  };
-  const response = await fetch(url, {
-    ...options,
-    headers: mergedHeaders
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = data?.detail;
-    let detailText = null;
-    if (typeof detail === "string") {
-      detailText = detail;
-    } else if (Array.isArray(detail)) {
-      const messages = detail
-        .map((item) => {
-          if (!item) {
-            return null;
-          }
-          if (typeof item === "string") {
-            return item;
-          }
-          if (typeof item.msg === "string") {
-            return item.msg;
-          }
-          if (typeof item.message === "string") {
-            return item.message;
-          }
-          return null;
-        })
-        .filter(Boolean);
-      if (messages.length) {
-        detailText = messages.join("；");
-      }
-    } else if (detail && typeof detail.message === "string") {
-      detailText = detail.message;
-    }
-    throw new Error(detailText || "请求失败");
-  }
-  return data;
-}
-
-async function ensureAnonymousId() {
-  if (anonymousId) {
-    return anonymousId;
-  }
-  const stored = await storageGet({ [ANONYMOUS_ID_KEY]: "" });
-  const saved = stored[ANONYMOUS_ID_KEY];
-  if (saved) {
-    anonymousId = saved;
-    return anonymousId;
-  }
-  const randomPart = Math.random().toString(36).slice(2, 10);
-  anonymousId = `anon_${Date.now().toString(36)}_${randomPart}`;
-  await storageSet({ [ANONYMOUS_ID_KEY]: anonymousId });
-  return anonymousId;
-}
-
-// 匿名埋点上报：不带任何账号凭据，失败一律忽略，不影响导出主流程
-async function reportAnalytics(action, exportType, docUrl, docTitle) {
-  try {
-    const payload = {
-      action,
-      export_type: exportType || null,
-      doc_url: docUrl || null,
-      doc_title: docTitle || null,
-      client_version: CLIENT_VERSION,
-      client_ts: Date.now(),
-      anonymous_id: await ensureAnonymousId()
-    };
-    await fetchJson(`${DEFAULT_BACKEND_URL}/analytics/event`, {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-  } catch (error) {
-    // 忽略上报失败
-  }
 }
 
 let activeExport = null;
@@ -583,7 +482,7 @@ function isFeishuUrl(url) {
     const parsedUrl = new URL(url || "");
     return parsedUrl.protocol === "https:" &&
       FEISHU_HOST_SUFFIXES.some((suffix) => parsedUrl.hostname.endsWith(suffix));
-  } catch (error) {
+  } catch {
     return false;
   }
 }
@@ -725,8 +624,6 @@ async function runExportTask({
     return;
   }
 
-  reportAnalytics("export_start", type, tab.url, tab.title);
-
   setProgress(startProgress);
   setStatus(startText);
 
@@ -753,18 +650,15 @@ async function runExportTask({
 
     if (!response || !response.ok) {
       setProgress(0);
-      setStatus(`${failureLabel}失败：${response?.error || "未知错误"}`, true);
-      reportAnalytics("export_failed", type, tab.url, tab.title);
-      return;
+    setStatus(`${failureLabel}失败：${response?.error || "未知错误"}`, true);
+    return;
     }
 
     setProgress(100);
     setStatus(successText(response));
-    reportAnalytics("export_success", type, tab.url, tab.title);
   } catch (error) {
     setProgress(0);
     setStatus(`${failureLabel}失败：${getErrorMessage(error)}`, true);
-    reportAnalytics("export_failed", type, tab.url, tab.title);
   } finally {
     if (requestId) {
       endExport();
@@ -828,6 +722,8 @@ const handleExportAttachments = () =>
 //
 // 计划（哪篇文档落到 ZIP 里的哪个路径）在侧边栏算：目录树与勾选状态都在这边，
 // 后台拿到的已经是算好的路径，不必再理解目录树。见 lib/batch-plan.js。
+// 扩展名由格式决定（markdown→md / html→html / word→docx / pdf→pdf），映射同出
+// batch-plan.js，保证「计划里的路径」与「后台实际写出的条目」是同一个扩展名。
 
 // 批量期间维持一条到 Service Worker 的长连接。MV3 的 SW 空闲约 30s 就被回收，
 // 而「等渲染页回传」这类纯等待阶段没有任何事件，最容易被回收、整批就此断掉。
@@ -842,13 +738,13 @@ function startBatchKeepAlive() {
       // 读掉 lastError，避免 SW 重启时在控制台刷未捕获错误
       void chrome.runtime.lastError;
     });
-  } catch (error) {
+  } catch {
     batchPort = null;
   }
   batchKeepAliveTimer = setInterval(() => {
     try {
       batchPort?.postMessage({ type: "ping", at: Date.now() });
-    } catch (error) {
+    } catch {
       // 忽略：连接已断，SW 会自行按需唤醒
     }
   }, 20000);
@@ -861,7 +757,7 @@ function stopBatchKeepAlive() {
   }
   try {
     batchPort?.disconnect();
-  } catch (error) {
+  } catch {
     // 忽略
   }
   batchPort = null;
@@ -870,7 +766,8 @@ function stopBatchKeepAlive() {
 function summarizeBatch(stats, filename) {
   const total = stats.total || 0;
   const succeeded = stats.succeeded || 0;
-  const lines = [`批量导出完成：${succeeded}/${total} 篇 → ${filename}`];
+  const formatLabel = FORMAT_LABELS[stats.format] || "";
+  const lines = [`批量导出完成：${succeeded}/${total} 篇${formatLabel ? ` ${formatLabel}` : ""} → ${filename}`];
   if (stats.images) {
     lines.push(`含 ${stats.images} 张图片`);
   }
@@ -889,22 +786,22 @@ function summarizeBatch(stats, filename) {
   return lines.join("\n");
 }
 
-async function handleBatchMarkdown() {
+async function handleBatch(format) {
   const tab = await ensureFeishuTab();
   if (!tab) {
     return;
   }
 
-  const plan = buildBatchPlan(ui.treeNodes, ui.treeSelectedUids);
+  const plan = buildBatchPlan(ui.treeNodes, ui.treeSelectedUids, {
+    extension: FORMAT_EXTENSIONS[format]
+  });
   if (!plan.items.length) {
     setProgress(0);
     setStatus("勾选的节点里没有可导出的文档（非文档类型，或缺少 wikiToken）。", true);
     return;
   }
 
-  reportAnalytics("export_start", "markdown", tab.url, tab.title);
-
-  const requestId = beginExport("markdown", tab.id);
+  const requestId = beginExport(format, tab.id);
   startBatchKeepAlive();
 
   const skippedNote = plan.skipped.length ? `，另跳过 ${plan.skipped.length} 个非文档节点` : "";
@@ -913,9 +810,10 @@ async function handleBatchMarkdown() {
   const folderNote = plan.stats.foldersOnly
     ? `，另有 ${plan.stats.foldersOnly} 个文件夹只作目录层级、不单独导出`
     : "";
+  const formatLabel = FORMAT_LABELS[format] || format;
   setProgress(2);
   setStatus(
-    `开始批量导出 ${plan.items.length} 篇文档${folderNote}${skippedNote}…\n` +
+    `开始批量导出 ${plan.items.length} 篇文档为 ${formatLabel}${folderNote}${skippedNote}…\n` +
       `导出期间会短暂打开一个后台窗口，请不要关闭它。`
   );
 
@@ -923,34 +821,32 @@ async function handleBatchMarkdown() {
     let host = "";
     try {
       host = new URL(tab.url).hostname;
-    } catch (error) {
+    } catch {
       host = "";
     }
 
     const response = await sendRuntimeMessage(
-      exportCommand(Msg.EXPORT_BATCH_MARKDOWN, {
+      exportCommand(Msg.EXPORT_BATCH, {
         tabId: tab.id,
         host,
         requestId,
+        format,
         plan
       })
     );
 
     if (!response || !response.ok) {
       setProgress(0);
-      setStatus(`批量导出失败：${response?.error || "未知错误"}`, true);
-      reportAnalytics("export_failed", "markdown", tab.url, tab.title);
-      return;
+    setStatus(`批量导出失败：${response?.error || "未知错误"}`, true);
+    return;
     }
 
     const stats = response.result || {};
     setProgress(100);
     setStatus(summarizeBatch(stats, response.filename));
-    reportAnalytics("export_success", "markdown", tab.url, tab.title);
   } catch (error) {
     setProgress(0);
     setStatus(`批量导出失败：${getErrorMessage(error)}`, true);
-    reportAnalytics("export_failed", "markdown", tab.url, tab.title);
   } finally {
     endExport();
     stopBatchKeepAlive();
@@ -967,15 +863,19 @@ const EXPORT_ACTIONS = {
 };
 
 // 「执行」到底做什么，取决于「导出方式」：
-//   批量 → 按目录树勾选打包 ZIP（目前只支持 Markdown，其它格式给出提示）
+//   批量 → 按目录树勾选打包 ZIP（Markdown / HTML / Word / PDF 均支持，附件除外）
 //   单篇 → 维持原来的单篇导出（导出当前打开的这一篇）
 function resolveExportAction() {
   if (ui.mode === "batch") {
-    if (ui.format === "markdown") {
-      return handleBatchMarkdown;
+    if (!FORMAT_EXTENSIONS[ui.format]) {
+      return () =>
+        setStatus(
+          "批量导出暂不支持「附件」，请把导出格式切换为 Markdown / HTML / Word / PDF 后再试。",
+          true
+        );
     }
-    return () =>
-      setStatus("批量导出目前只支持 Markdown，请把导出格式切换为 Markdown 后再试。", true);
+    const format = ui.format;
+    return () => handleBatch(format);
   }
   return EXPORT_ACTIONS[ui.format];
 }
@@ -1065,8 +965,6 @@ treeCheckAllEl.addEventListener("change", () => {
 });
 
 async function bootstrap() {
-  await ensureAnonymousId();
-  reportAnalytics("panel_open", null, null, null);
 }
 
 bootstrap();

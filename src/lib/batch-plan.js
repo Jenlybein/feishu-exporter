@@ -1,8 +1,9 @@
 // 批量导出计划 —— 把「目录树里勾选的节点」换算成 ZIP 内的相对路径。
 //
 // 纯函数、零 DOM、零副作用：输入是 flattenTree 出来的有序节点数组 + 勾选的 uid 集合，
-// 输出是每篇文档要落到的 md 路径、图片目录，以及被跳过的节点清单。这样批量编排
-// （background/modules/batch.js）只管跑流程，路径这层可以在 Node 下单独跑用例。
+// 输出是每篇文档要落到 ZIP 里的文件路径（Markdown 还多一个同级图片目录），以及被跳过的
+// 节点清单。这样批量编排（background/modules/batch.js）只管跑流程，路径这层可以在
+// Node 下单独跑用例。
 //
 // 为什么路径要单独算：目录树是「标题」而非「文件名」，直接拼进 ZIP 会撞三件事——
 //   1) 同层重名（飞书里两个「整理」很常见）；
@@ -18,7 +19,7 @@ export { sanitizePathSegment };
 // 按 Markdown 导出必然失败。默认跳过并在报告里说明，避免白跑一遍才发现。
 // 注意：kind 为 "unknown"（没读到图标）与 "other"（图标没在映射表里）不在此列——
 // 它们很可能就是普通文档，宁可试一次也不要漏导。
-export const NON_DOCUMENT_KINDS = new Set([
+const NON_DOCUMENT_KINDS = new Set([
   "video",
   "image",
   "sheet",
@@ -26,6 +27,24 @@ export const NON_DOCUMENT_KINDS = new Set([
   "mindnote",
   "slide"
 ]);
+
+// 导出格式 -> 产物扩展名。批量导出按格式选渲染链路，扩展名决定 ZIP 里的文件名，
+// 放在这里作为唯一来源，侧边栏与编排层都从这里取，避免两处各写一份映射。
+export const FORMAT_EXTENSIONS = {
+  markdown: "md",
+  html: "html",
+  word: "docx",
+  pdf: "pdf"
+};
+
+// 把外部传入的扩展名收敛到白名单内：未知值一律退回 md。
+// 扩展名会拼进 ZIP 路径，不能放任任意字符串（含 / 或 .. 会写出目录穿越式的条目）。
+function normalizeExtension(value) {
+  const ext = String(value || "")
+    .replace(/^\./, "")
+    .toLowerCase();
+  return Object.values(FORMAT_EXTENSIONS).includes(ext) ? ext : "md";
+}
 
 // 同层名字分配器。
 //
@@ -44,8 +63,8 @@ function createNameAllocator() {
     return used;
   };
 
-  // 在作用域内取一个不冲突的名字；重名时追加 " (2)"、" (3)"…（与 tree-path 的
-  // dedupeSiblings 同一套编号，避免同一棵树里出现两种消歧风格）。
+  // 在作用域内取一个不冲突的名字；重名时追加 " (2)"、" (3)"…（与文件名净化同一套编号，
+  // 保证目录名与文件名消歧风格一致，Windows 解压不会互相覆盖）。
   const allocate = (scopeKey, wantedName) => {
     const used = setOf(scopeKey);
     const base = wantedName || "未命名文档";
@@ -83,11 +102,16 @@ function createNameAllocator() {
 // @param {object} [options]
 //   options.skipKinds    额外要跳过的 kind 集合（并入 NON_DOCUMENT_KINDS）
 //   options.includeKinds 只导出这些 kind（设置后优先于 skipKinds）
+//   options.extension    产物扩展名（默认 md）；决定 items[].filePath
 // @returns {{ items: Array, skipped: Array, stats: object }}
-//   items[]: { uid, wikiToken, title, url, kind, dir, baseName, mdPath, assetsDir,
-//              assetsLeaf, depth, pathTitles }
+//   items[]: { uid, wikiToken, title, url, kind, dir, baseName, filePath, extension,
+//              assetsDir, assetsLeaf, depth, pathTitles }
+//             assetsDir / assetsLeaf 仅 Markdown 有值（图片另存为同级目录）；
+//             HTML / Word / PDF 的图片已内联进产物，不需要旁挂目录。
 //   skipped[]: { uid, title, kind, reason }
 export function buildBatchPlan(nodes, selectedUids, options = {}) {
+  const extension = normalizeExtension(options.extension);
+  const usesAssets = extension === "md";
   const selected =
     selectedUids instanceof Set ? selectedUids : new Set(selectedUids || []);
   const skipKinds = new Set([
@@ -168,7 +192,7 @@ export function buildBatchPlan(nodes, selectedUids, options = {}) {
         uid: node.uid,
         title: node.title || "",
         kind: node.kind,
-        reason: `类型 ${node.kind} 不是文档，无法按 Markdown 导出`
+        reason: `类型 ${node.kind} 不是文档，无法导出`
       });
       continue;
     }
@@ -206,12 +230,14 @@ export function buildBatchPlan(nodes, selectedUids, options = {}) {
       baseName = allocate(scopeKey, sanitizePathSegment(node.title));
       nameByUid.set(node.uid, baseName);
     }
-    const mdPath = dir ? `${dir}/${baseName}.md` : `${baseName}.md`;
-    const assetsLeaf = `${baseName}.assets`;
-    // 占住「本篇文档」在同层要用的两个名字，避免后续节点恰好命名为 `X.md` / `X.assets`
+    const filePath = dir ? `${dir}/${baseName}.${extension}` : `${baseName}.${extension}`;
+    const assetsLeaf = usesAssets ? `${baseName}.assets` : "";
+    // 占住「本篇文档」在同层要用的名字，避免后续节点恰好命名为 `X.md` / `X.assets`
     // 而互相覆盖。占不到（极罕见）也不影响正确性，只是少了这层额外保护。
-    reserve(scopeKey, `${baseName}.md`);
-    reserve(scopeKey, assetsLeaf);
+    reserve(scopeKey, `${baseName}.${extension}`);
+    if (assetsLeaf) {
+      reserve(scopeKey, assetsLeaf);
+    }
 
     // 与 dir 保持一致：只含「被勾选的祖先 + 自身」。ZIP 基名取 pathTitles[0]，
     // 只勾一篇时它就等于这篇的标题。
@@ -225,8 +251,9 @@ export function buildBatchPlan(nodes, selectedUids, options = {}) {
       kind: node.kind || "",
       dir,
       baseName,
-      mdPath,
-      assetsDir: dir ? `${dir}/${assetsLeaf}` : assetsLeaf,
+      filePath,
+      extension,
+      assetsDir: assetsLeaf ? (dir ? `${dir}/${assetsLeaf}` : assetsLeaf) : "",
       assetsLeaf,
       depth: Number(node.depth) || 0,
       pathTitles

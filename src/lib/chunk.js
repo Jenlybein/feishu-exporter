@@ -1,5 +1,5 @@
 // 大字符串分块：用于跨扩展上下文的消息传递，避免单条消息超长。
-export const CHUNK_MESSAGE_SIZE = 512 * 1024;
+const CHUNK_MESSAGE_SIZE = 512 * 1024;
 
 export function splitStringToChunks(text, chunkSize = CHUNK_MESSAGE_SIZE) {
   const value = String(text || "");

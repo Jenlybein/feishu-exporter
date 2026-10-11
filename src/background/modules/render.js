@@ -105,7 +105,7 @@ export function completeRenderResultSuccess(requestId, payloadText) {
   try {
     const parsed = JSON.parse(payloadText || "{}");
     waiter.resolve(parsed);
-  } catch (error) {
+  } catch {
     waiter.reject(new Error("Failed to parse render result"));
   }
 }

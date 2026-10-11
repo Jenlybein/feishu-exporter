@@ -15,21 +15,29 @@
 | **PDF** | 借助 Chrome DevTools Protocol（`debugger` 权限）`Page.printToPDF` 生成 |
 | **Markdown** | 通过 `turndown` + `turndown-plugin-gfm` 将文档块模型转为 Markdown |
 | **HTML** | 还原飞书块模型为带样式的自包含 HTML 文档 |
-| **附件** | 批量抓取文档内嵌入的图片、文件等附件，可打包为 ZIP |
+| **附件** | 抓取文档内嵌入的图片与文件，按子目录逐个下载落盘（不打包） |
 
 支持的飞书域名：`*.feishu.cn`、`*.feishu.net`、`*.feishu.cttq.com`。
 
 侧边栏顶部的「导出方式」下拉有 **单篇 / 批量** 两档，默认**单篇**（导出当前打开的这篇文档）；
 只有切到**批量**时才会显示下方的「目录树」区块。在批量模式下点「刷新目录」读取飞书 Wiki 左侧目录树并
-**多选勾选**（只读页面上已展开的部分，折叠节点的子节点未加载），勾选语义见下表。勾选后保持格式为
-**Markdown**、点「批量导出」，
-即可把这批文档逐篇抓下来、打包成一个 ZIP（每篇一个 `.md`，图片落在同级的
-`<文档名>.assets/` 目录里，Markdown 里的图片引用已改写到该目录）；有失败或跳过的节点会额外
-写一份 `导出报告.txt` 进压缩包。其余格式（Word / PDF / HTML / 附件）目前仍是单篇导出当前文档，
-P2 / P3 再补。
+**多选勾选**（只读页面上已展开的部分，折叠节点的子节点未加载），勾选语义见下表。勾选后选好格式、点
+「批量导出」，即可把这批文档逐篇抓下来、打包成**一个 ZIP**；有失败或跳过的节点会额外写一份
+`导出报告.txt` 进压缩包。
+
+批量支持 **Markdown / HTML / Word / PDF** 四种格式，产物按格式落不同扩展名：
+
+| 格式 | ZIP 内的产物 | 图片 |
+|------|--------------|------|
+| **Markdown** | 每篇一个 `.md` | 另存到同级的 `<文档名>.assets/`，引用已改写到该目录 |
+| **HTML** | 每篇一个自包含 `.html` | 内联为 `data:URL`，不额外生成文件 |
+| **Word** | 每篇一个 `.docx` | 已嵌入文档内 |
+| **PDF** | 每篇一个 `.pdf` | 已嵌入文档内 |
+
+「附件」格式**不支持批量**（它的产物是一堆散落文件而非单个制品，与「一个 ZIP」的模型不合）。
 
 **ZIP 里的文件夹层级只反映「你勾了什么」**，不是飞书目录树本身：没勾的父级不会凭空生成文件夹
-（只勾最里层几篇 → 结果是完全扁平的，所有 `.md` 平铺在根目录，同名自动加 ` (2)` 后缀）；勾上了
+（只勾最里层几篇 → 结果是完全扁平的，所有产物平铺在根目录，同名自动加 ` (2)` 后缀）；勾上了
 父级，它才会以文件夹的形式出现在路径里（勾了 `实战项目` 和它下面的 `整理` → 只有
 `实战项目/整理.md`）。见 `src/lib/batch-plan.js` 的 `selected.has(ancestor.uid)` 判断。
 
@@ -154,10 +162,13 @@ npm run dev        # 等价于 vite build --watch
   **不做自动展开**——需要那些内容时在页面上手动展开后重读。
   之所以直连：目录树是同一份 DOM，isolated world 里 `querySelectorAll` 就能读到，不需要 MAIN world 注入与 SW 中转。
 
-- `EXPORT_BATCH_MARKDOWN`：侧边栏 → **SW**。消息体带 `plan`（见 `lib/batch-plan.js`：每篇文档
-  在 ZIP 内的 `mdPath` / `assetsDir`），SW 逐篇导航 → 提取 → 转 Markdown → 汇总成一个 ZIP，
+- `EXPORT_BATCH`：侧边栏 → **SW**。消息体带 `plan`（见 `lib/batch-plan.js`：每篇文档在 ZIP 内的
+  `filePath`，Markdown 另有 `assetsDir`）与 `format`（`markdown` / `html` / `word` / `pdf`），
+  SW 逐篇导航 → 提取主干 HTML → 按格式落成对应字节 → 汇总成一个 ZIP，
   成功响应返回 `{ ok, result: { filename, stats } }`（`stats.failures` 里带前若干条失败明细）。
   计划的路径**在侧边栏算**：目录树与勾选状态都在这边，SW 不必再理解目录树。
+  扩展名由 `FORMAT_EXTENSIONS`（`lib/batch-plan.js`）统一定义，侧边栏与编排层共用同一张表，
+  避免「计划里的路径」与「实际写出的条目」扩展名不一致。
 - `BATCH_PORT_NAME`（长连接端口名）：侧边栏在批量期间 `chrome.runtime.connect` 保持一条长连接
   并 20s 心跳。MV3 的 SW 空闲约 30s 就被回收，而「等渲染页回传」这类纯等待阶段没有任何事件，
   最容易被回收、整批就此断掉；连接存在即视为 SW 仍在工作。SW 侧只需接住它，不搬运业务数据。
@@ -176,6 +187,13 @@ npm run dev        # 等价于 vite build --watch
 
 > `RENDER_RESULT_*` 与 `waitForRenderResult` 是**格式无关**的通用机制：渲染页只管把最终产物序列化成字符串切块回传，SW 负责拼装与落盘。
 
+若该格式也要支持**批量**，再补两处（都以「格式名 → 扩展名」为单一事实来源）：
+
+6. `lib/batch-plan.js` 的 `FORMAT_EXTENSIONS` 加一行（决定 ZIP 里的扩展名，侧边栏与编排层共用）。
+7. `background/modules/batch.js` 的 `RENDER_PAGES`（若需渲染页）与 `renderItemToBytes`（HTML 之后怎么变成落进 ZIP 的字节）各加一个分支。
+
+> 批量四种格式的主干完全共用（导航 → 等模型就绪 → 提取主干 HTML），只有「HTML 之后」这一步因格式而异。因此新增格式的批量支持通常只是加两个分支，不需要动导航、等待、失败收集与 ZIP 打包。
+
 ### 3.3 目录职责
 
 ```
@@ -187,14 +205,14 @@ src/
     chunk.js / chunked-render.js  大消息分块与渲染页接收工厂
     filename.js / images.js / text.js / markdown.js   文件名、图片、文本、Markdown 转换
     tree-path.js               目录树路径工具（uid/pos 解析、pos→树、路径净化与重名消歧、目录/未展开判定与级联）
-    batch-plan.js              批量导出的路径规划（勾选集合 → ZIP 内 md / assets 路径、文件夹退位成目录、重名消歧、失败报告）
+    batch-plan.js              批量导出的路径规划（勾选集合 → ZIP 内文件路径与 Markdown 的 assets 目录、格式→扩展名映射、文件夹退位成目录、重名消歧、失败报告）
     reactive.js                极简响应式状态容器（侧边栏 UI 用）
   background/
     index.js                   Service Worker 入口：面板行为 + 消息分发 + 批量保活长连接
     modules/
       messaging.js             唯一消息监听入口 + EXPORT_HANDLERS 分发表
       exporters.js             各格式导出编排（word/html/markdown/attachments/pdf/下载）+ 渲染标签页复用
-      batch.js                 批量导出编排：逐篇抓取 → 汇总 ZIP → 收尾回收
+      batch.js                 批量导出编排：逐篇抓取 → 按格式落成字节 → 汇总 ZIP → 收尾回收
       templates.js             HTML 文档模板（纯展示）
       render.js                渲染标签页协调 + 分块收发
       inject.js                MAIN world 注入封装（injectAndRun / 各提取入口）
@@ -244,7 +262,7 @@ src/
 | Word 图片中 webp / svg 需光栅化 | `docx` 只接受 png/jpg/gif/bmp | 在渲染页用 canvas 转 png（顺带限制最大边长）；gif 直接透传 |
 | 批量导出的文档标签页放在**独立窗口**（`focused:false`）里，收尾整窗关闭 | 复用用户当前标签页会把用户页面导航走、还污染历史；用隐藏标签页（`active:false`）会因后台节流漏渲染——飞书编辑器是虚拟列表，流程图/白板/表格必须靠 DOM+canvas 截图 | 独立窗口两头都避开，代价是导出期间会短暂出现一个不抢焦点的后台窗口 |
 | 大 ZIP 经 base64 `data:` URL 下载 | Service Worker 里没有 `URL.createObjectURL`，`downloadZip` 会退化成 `data:application/zip;base64,…` | 接受；单篇导出一直如此。批量越大内存占用越高，超大批量（数百 MB 量级）需要挪到 SW 之外落盘（offscreen document 或侧边栏） |
-| 批量默认跳过 `video / sheet / bitable / mindnote / slide / image` 节点 | 这些节点没有可分页的文档模型，按 Markdown 导出必然失败 | 跳过并写进 `导出报告.txt`；`unknown` / `other`（图标没认出来）**不跳过**——很可能就是普通文档，宁可试一次 |
+| 批量默认跳过 `video / sheet / bitable / mindnote / slide / image` 节点 | 这些节点没有可分页的文档模型，任何格式都导不出内容 | 跳过并写进 `导出报告.txt`；`unknown` / `other`（图标没认出来）**不跳过**——很可能就是普通文档，宁可试一次 |
 
 ---
 
@@ -261,15 +279,21 @@ src/
 
 ## 7. 后续路线图（按收益排序）
 
-0. **批量导出（进行中）**：
+0. **批量导出**：
    - ✅ P0 完整目录读取 + 侧边栏多选勾选（复选框只切自身、点行级联整支含目录自身、全选只选文档，
      ▸ 未展开的文件夹不参与批量勾选）。
    - ✅ P1 Markdown 批量 + ZIP：勾选清单打包成一个 ZIP（含图片与失败报告），
      ZIP 内的文件夹层级只由「勾选」决定（未勾的父级不产生 folder，勾上的父级只作目录、不单独成文），
      SW 侧长连接保活（`BATCH_PORT_NAME`）。
-   - P2 批量补 HTML / Word（复用现有渲染页，路径规划与编排层可直接沿用）。
-   - P3 批量补 PDF / 附件，以及**取消**与**断点续传**：`exportBatchMarkdown` 已预留
-     `shouldStop` 钩子，中断信息（已完成的路径清单）可落 `chrome.storage` 供续传。
+   - ✅ P2 批量补 HTML / Word / PDF：主干（导航 → 等模型 → 提取 HTML）完全共用，
+     差异只在「HTML 之后怎么变成落进 ZIP 的字节」——
+     Markdown 走 `md-render`（图片另存到 `<名>.assets/`）、HTML 套 `wrapHtmlDocument` 模板
+     （图片已内联为 data:URL，产物即自包含单文件）、Word 走 `word-render` 直接映射 docx、
+     PDF 走 `pdf-render` 铺好内容后由 `printToPdfData` 取回字节。
+     渲染页按格式选，且只有需要的格式才开（HTML 不开）。
+     批量仍**不支持附件**：附件的产物是一堆散落文件而非单个制品，与「一个 ZIP」的模型不合。
+   - P3 取消与**断点续传**：`exportBatch` 已预留 `shouldStop` 钩子，
+     中断信息（已完成的路径清单）可落 `chrome.storage` 供续传。
 1. **拆分 `extract-html.js`** 为「按块类型」的多个纯渲染器（image / table / sheet / diagram），降低单文件认知负荷；保持零依赖、单入口不变。
 2. **媒体工具去重**：把 `content/markdown.js` 里的 `readBlobAsDataUrl` / `imageSrcToDataUrl` / `canvasToDataUrl` 抽到 `lib/`（会被内容脚本内联）。
 3. **协议增强**：为 `Msg` 增加运行时校验（开发期 `console.warn` 未登记类型），尽早发现拼写错误。

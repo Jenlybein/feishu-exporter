@@ -46,7 +46,7 @@ export function parseNodeUid(uid) {
     try {
       key = decodeURIComponent(pair.slice(0, separator));
       value = decodeURIComponent(pair.slice(separator + 1));
-    } catch (error) {
+    } catch {
       continue;
     }
     for (const [field, aliases] of Object.entries(UID_FIELD_ALIASES)) {
@@ -82,7 +82,7 @@ export function parseNodePos(pos) {
 }
 
 // pos 序列拼成 Map 键，用于「按 pos 找节点」。
-export function posKey(pos) {
+function posKey(pos) {
   return Array.isArray(pos) ? pos.join(",") : String(pos || "");
 }
 
@@ -295,20 +295,6 @@ export function pathTitles(node, includeSelf = true) {
 // 保证 ZIP 内目录名与文件名同一套规则，Windows 解压不会炸。
 export function sanitizePathSegment(name) {
   return sanitizeFilename(name, "未命名文档");
-}
-
-// 同层重名消歧：保留首个原名，后续追加 " (2)"、"(3)"…。入参可为节点数组或字符串数组，
-// 返回同形状的重名计数表 key -> 最终名字（不改动原数组）。
-export function dedupeSiblings(items, getName = (item) => item?.title) {
-  const used = new Map();
-  const resolved = new Map();
-  for (const item of Array.isArray(items) ? items : []) {
-    const name = sanitizePathSegment(getName(item));
-    const count = (used.get(name) || 0) + 1;
-    used.set(name, count);
-    resolved.set(item, count === 1 ? name : `${name} (${count})`);
-  }
-  return resolved;
 }
 
 // 由 wikiToken 拼文档 URL；host 缺省时用当前页面的 hostname。

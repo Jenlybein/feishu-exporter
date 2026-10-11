@@ -13,7 +13,7 @@ import {
   completeRenderResultSuccess,
   completeRenderResultError
 } from "./render.js";
-import { exportBatchMarkdown } from "./batch.js";
+import { exportBatch } from "./batch.js";
 import {
   Msg,
   EXPORT_RESULT_KEY,
@@ -22,7 +22,7 @@ import {
 } from "../../lib/protocol.js";
 
 // 从消息与发送方解析 tabId / title / requestId，省去各分支重复解构。
-export function readTabContext(message, sender) {
+function readTabContext(message, sender) {
   return {
     tabId: message.tabId || sender?.tab?.id,
     title: message.title || "feishu-document",
@@ -42,11 +42,13 @@ const EXPORT_HANDLERS = {
   [Msg.EXPORT_WORD_ADVANCED]: (ctx) =>
     exportWordFromHtml(ctx.tabId, ctx.title, ctx.requestId),
   // 批量导出的计划由侧边栏预先算好（它才有目录树与勾选状态），这里只负责跑流程。
-  [Msg.EXPORT_BATCH_MARKDOWN]: (ctx, message) =>
-    exportBatchMarkdown({
+  // format 决定用哪个渲染页与产物扩展名（markdown / html / word / pdf）。
+  [Msg.EXPORT_BATCH]: (ctx, message) =>
+    exportBatch({
       sourceTabId: ctx.tabId,
       host: message.host,
       plan: message.plan,
+      format: message.format || "markdown",
       requestId: ctx.requestId
     })
 };
@@ -78,7 +80,7 @@ export function registerMessageHandler() {
       const waiter = renderResultWaiters.get(message.requestId);
       if (waiter) {
         waiter.totalChunks = Number(message.totalChunks) || 0;
-        waiter.chunks = new Array(waiter.totalChunks || 0);
+        waiter.chunks = Array.from({ length: waiter.totalChunks || 0 });
       }
       ack(sendResponse);
       return;

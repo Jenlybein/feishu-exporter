@@ -40,7 +40,7 @@ function captureMarkdownSnapshot(snapshots) {
     if (markdown) {
       snapshots.push(markdown);
     }
-  } catch (error) {
+  } catch {
     // 页面滚动过程中 DOM 可能短暂变化，忽略单次采集失败。
   }
 }
@@ -278,7 +278,7 @@ function removePreloadMask() {
 }
 
 // 向 background 广播导出进度（进度回调无接收者时不刷错误）。
-export function emitExportProgress(requestId, exportType, progress, message) {
+function emitExportProgress(requestId, exportType, progress, message) {
   if (!requestId || !exportType) {
     return;
   }
@@ -290,7 +290,7 @@ export function emitExportProgress(requestId, exportType, progress, message) {
         void chrome.runtime.lastError;
       }
     );
-  } catch (error) {
+  } catch {
     // 忽略消息失败
   }
 }
@@ -332,7 +332,7 @@ export async function prepareExport(requestId, exportType) {
     await sleep(300);
     setScrollTop(container, originalTop ?? 0);
     await sleep(200);
-  } catch (error) {
+  } catch {
     emitExportProgress(requestId, exportType, progressBase, "预加载异常，继续导出");
   } finally {
     removePreloadMask();

@@ -13,7 +13,7 @@ export function sendExportProgress(tabId, requestId, exportType, progress, messa
     if (maybePromise && typeof maybePromise.catch === "function") {
       maybePromise.catch(() => {});
     }
-  } catch (error) {
+  } catch {
     // 没有接收者时忽略。
   }
 }
